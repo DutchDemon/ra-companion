@@ -17,7 +17,7 @@ try {
 }
 
 $patchHash = (Get-FileHash $patchPath -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($patchHash -ne '77dfeb04eb8ac32078ee8341f1cdf96d247951acac8e01b4e9e0c30b5c9211d6') {
+if ($patchHash -ne '712c145455170a1777d8c1783571f3fa964fa72141e95773a7c5b220d61e9c0d') {
   throw "v0.5.7 patch SHA256 mismatch: $patchHash"
 }
 
@@ -56,6 +56,7 @@ if (-not (Test-Path 'app/src/__tests__/v057.regression.test.tsx')) { throw 'v0.5
 if (-not $profile.Contains('isFaronTearObjectiveActive')) { throw 'Faron Tear objective stage gate is missing.' }
 if (-not $profile.Contains("stageCode || '').trim() === 'F_SP108'")) { throw 'Faron Woods stage gate is missing.' }
 if (-not $profile.Contains('activeFaronTearObjectives')) { throw 'Faron Tears current-objective prioritization is missing.' }
+if (-not $profile.Contains('strictRamBeat && isFaronTearAchievement(achievement)')) { throw 'Inactive Faron Tear story fallback guard is missing.' }
 if (-not $stateEngine.Contains('prevents a stale 0-16 metric from following the player into')) { throw 'Forest Temple Tear counter guard is missing.' }
 if (-not $renderer.Contains('isFaronTearObjectiveActive')) { throw 'Renderer Tear counter guard is missing.' }
 
