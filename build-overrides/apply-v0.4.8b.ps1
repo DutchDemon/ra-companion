@@ -4,7 +4,7 @@ function To-Lf([string]$Text) { return $Text.Replace("`r`n", "`n") }
 function Replace-One([string]$Text, [string]$Pattern, [string]$Replacement, [string]$Label) {
   $regex = [regex]::new($Pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
   $matches = $regex.Matches($Text)
-  if ($matches.Count -ne 1) { throw "v0.4.8 $Label: expected 1 match, found $($matches.Count)." }
+  if ($matches.Count -ne 1) { throw ("v0.4.8 " + $Label + ": expected 1 match, found " + $matches.Count + ".") }
   return $regex.Replace($Text, $Replacement, 1)
 }
 
