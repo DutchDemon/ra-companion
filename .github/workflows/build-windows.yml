@@ -33,7 +33,7 @@ jobs:
           Expand-Archive $zip -DestinationPath app -Force
           "SOURCE_SHA256=$actual" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Apply v0.4.8 source overrides
+      - name: Apply v0.5.0 source overrides
         shell: pwsh
         run: |
           if (-not (Test-Path 'build-overrides/src')) { throw 'Renderer source overrides directory is missing.' }
@@ -44,9 +44,10 @@ jobs:
           & 'build-overrides/apply-v0.4.6.ps1'
           & 'build-overrides/apply-v0.4.7.ps1'
           & 'build-overrides/apply-v0.4.8b.ps1'
+          & 'build-overrides/apply-v0.5.0.ps1'
           if (-not (Test-Path 'app/src/profiles/twilightPrincessGuide.ts')) { throw 'Twilight Princess guide module was not applied.' }
           $pkg = Get-Content 'app/package.json' -Raw | ConvertFrom-Json
-          if ($pkg.version -ne '0.4.8') { throw "Expected app version 0.4.8, got $($pkg.version)" }
+          if ($pkg.version -ne '0.5.0') { throw "Expected app version 0.5.0, got $($pkg.version)" }
 
       - uses: actions/setup-node@v4
         with:
@@ -65,8 +66,14 @@ jobs:
           node --check electron/main.cjs
           node --check electron/preload.cjs
           if (Select-String -Path 'build/installer.nsh' -Pattern 'isForceCurrentInstall') { throw 'Forced per-user installer mode is not allowed.' }
-          if (-not (Select-String -Path 'src/main.tsx' -Pattern 'getTwilightMissableGuide' -Quiet)) { throw 'Guide UI hook is missing.' }
-          if (-not (Select-String -Path 'src/styles.css' -Pattern 'v0.4.5 guide-backed missable details' -Quiet)) { throw 'Guide styles are missing.' }
+          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'className="v5-app-shell"' -Quiet)) { throw 'v0.5.0 app shell is missing.' }
+          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'const liveRam = useLiveRam();' -Quiet)) { throw 'Main UI live RAM subscription is missing.' }
+          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'getTwilightMissableGuide(selectedMissable)' -Quiet)) { throw 'Clickable missable guide detail panel is missing.' }
+          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'WHAT MATTERS NOW' -Quiet)) { throw 'Live dashboard guidance panel is missing.' }
+          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'onUpdateStatusChanged' -Quiet)) { throw 'Updater progress UI subscription is missing.' }
+          if (Select-String -Path 'src/main.tsx' -SimpleMatch '<div className="notice update-notes">{updateStatus?.notes}</div>' -Quiet) { throw 'Raw HTML release notes renderer is still present.' }
+          if (-not (Select-String -Path 'src/styles.css' -SimpleMatch 'v0.5.0 complete UI/UX rework' -Quiet)) { throw 'v0.5.0 UI styles are missing.' }
+          if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'autoHideMenuBar: true' -Quiet)) { throw 'Main menu bar cleanup is missing.' }
           if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'quitAndInstall(true, true)' -Quiet)) { throw 'Silent updater install call is missing.' }
           if (Select-String -Path 'electron/main.cjs' -SimpleMatch 'quitAndInstall(false, true)' -Quiet) { throw 'Interactive updater install call is still present.' }
           if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'const windowTitle = `RA Companion v${app.getVersion()}`;' -Quiet)) { throw 'Dynamic app-version window title is missing.' }
@@ -76,8 +83,6 @@ jobs:
           if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch "updater.on('download-progress'" -Quiet)) { throw 'Updater download progress listener is missing.' }
           if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch "webContents.send('update:status-changed'" -Quiet)) { throw 'Updater status IPC broadcaster is missing.' }
           if (-not (Select-String -Path 'electron/preload.cjs' -SimpleMatch 'onUpdateStatusChanged' -Quiet)) { throw 'Updater status preload subscription is missing.' }
-          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'className="update-progress"' -Quiet)) { throw 'Updater progress UI is missing.' }
-          if (-not (Select-String -Path 'src/styles.css' -SimpleMatch 'v0.4.8 updater progress' -Quiet)) { throw 'Updater progress styles are missing.' }
           npm run build
 
       - name: Build NSIS installer
@@ -90,7 +95,7 @@ jobs:
       - name: Locate installer and generate hashes
         shell: pwsh
         run: |
-          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.4.8.exe' } | Select-Object -First 1
+          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.5.0.exe' } | Select-Object -First 1
           if (-not $installer) { throw 'NSIS installer was not generated.' }
           "INSTALLER_PATH=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
           "INSTALLER_NAME=$($installer.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -134,10 +139,10 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.4.8-windows
+          name: ra-companion-v0.5.0-windows
           if-no-files-found: error
           path: |
-            app/release/RA Companion Setup 0.4.8.exe
+            app/release/RA Companion Setup 0.5.0.exe
             app/release/*.blockmap
             app/release/latest.yml
             app/release/checksums.txt
@@ -150,7 +155,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.4.8-windows
+          name: ra-companion-v0.5.0-windows
           path: artifact
 
       - name: Install and update ClamAV
@@ -168,7 +173,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.4.8.exe' -print -quit)
+          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.5.0.exe' -print -quit)
           test -n "$INSTALLER"
           clamscan "$INSTALLER" | tee artifact/clamav-scan.txt
           test ${PIPESTATUS[0]} -eq 0
@@ -177,7 +182,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.4.8-antivirus
+          name: ra-companion-v0.5.0-antivirus
           path: artifact/clamav-scan.txt
           if-no-files-found: warn
 
@@ -188,79 +193,75 @@ jobs:
       - name: Download Windows build
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.4.8-windows
+          name: ra-companion-v0.5.0-windows
           path: release
 
       - name: Download ClamAV report
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.4.8-antivirus
+          name: ra-companion-v0.5.0-antivirus
           path: antivirus
 
       - name: Prepare and verify updater payload
         shell: bash
         run: |
-          test -f 'release/RA Companion Setup 0.4.8.exe'
-          test -f 'release/RA Companion Setup 0.4.8.exe.blockmap'
+          test -f 'release/RA Companion Setup 0.5.0.exe'
+          test -f 'release/RA Companion Setup 0.5.0.exe.blockmap'
           test -f 'release/latest.yml'
           test -f 'release/checksums.txt'
           test -f 'release/defender-scan.txt'
           test -f 'antivirus/clamav-scan.txt'
 
-          cp 'release/RA Companion Setup 0.4.8.exe' 'release/RA-Companion-Setup-0.4.8.exe'
-          cp 'release/RA Companion Setup 0.4.8.exe.blockmap' 'release/RA-Companion-Setup-0.4.8.exe.blockmap'
+          cp 'release/RA Companion Setup 0.5.0.exe' 'release/RA-Companion-Setup-0.5.0.exe'
+          cp 'release/RA Companion Setup 0.5.0.exe.blockmap' 'release/RA-Companion-Setup-0.5.0.exe.blockmap'
 
           EXPECTED_PATH=$(awk '/^path:/ {print $2; exit}' release/latest.yml)
-          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.4.8.exe'
+          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.5.0.exe'
           test -f "release/$EXPECTED_PATH"
           test -f "release/$EXPECTED_PATH.blockmap"
 
-      - name: Publish GitHub Release v0.4.8
+      - name: Publish GitHub Release v0.5.0
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > release-notes.md <<'EOF'
-          ## RA Companion v0.4.8 — Updater Progress + Startup Hotfix
+          ## RA Companion v0.5.0 — Live Companion UI Rework
 
-          - Fixes the v0.4.7 startup crash caused by the window-title guard being injected outside `createMainWindow()`.
-          - Enforces exactly one native main-window title handler so the version title cannot break the overlay again.
-          - Adds live in-app update download progress using electron-updater's `download-progress` events.
-          - Shows clear states for downloading, download complete, silent installation and automatic restart.
-          - Shows an explicit failure state so an update no longer looks like it silently stopped.
-          - Keeps silent NSIS updates, guide-backed missable warnings and read-only Dolphin RAM context intact.
+          - Completely reworks the main desktop UI into a focused live companion dashboard with dedicated Dashboard, Current Game, Achievements, Missables, Overlay, Updates and Settings pages.
+          - The main UI now consumes the same fast read-only Dolphin RAM context used by the overlay, so area, room, form, story context and relevant achievements update while you play.
+          - Adds clickable missables with guide-backed detail views for what to do, point of no return, retry/save advice and current live context.
+          - Adds a dedicated Missables page with live availability state and filters.
+          - Replaces raw updater release-note HTML with concise readable highlights while keeping live download progress and silent installation.
+          - Cleans up the desktop window presentation and keeps the dynamic version title, Hardcore-safe read-only RAM hook and existing overlay behavior intact.
 
-          Important: v0.4.7 may crash before its in-app updater can run, so users on that broken build should install v0.4.8 manually once. Future updates can use the in-app progress flow again.
-
-          The Windows installer was scanned successfully by Microsoft Defender and ClamAV in CI before this release was published.
+          The Windows installer was compiled and scanned successfully by Microsoft Defender and ClamAV in CI before publication.
           EOF
 
-          TAG='v0.4.8'
+          TAG='v0.5.0'
           REPO='${{ github.repository }}'
 
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            gh release delete-asset "$TAG" 'RA.Companion.Setup.0.4.8.exe' --repo "$REPO" -y || true
-            gh release delete-asset "$TAG" 'RA.Companion.Setup.0.4.8.exe.blockmap' --repo "$REPO" -y || true
             gh release upload "$TAG" \
-              'release/RA-Companion-Setup-0.4.8.exe' \
-              'release/RA-Companion-Setup-0.4.8.exe.blockmap' \
+              'release/RA-Companion-Setup-0.5.0.exe' \
+              'release/RA-Companion-Setup-0.5.0.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" --clobber
-            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.4.8' --notes-file release-notes.md --latest
+            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.5.0' --notes-file release-notes.md --latest
           else
             gh release create "$TAG" \
-              'release/RA-Companion-Setup-0.4.8.exe' \
-              'release/RA-Companion-Setup-0.4.8.exe.blockmap' \
+              'release/RA-Companion-Setup-0.5.0.exe' \
+              'release/RA-Companion-Setup-0.5.0.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" \
               --target main \
-              --title 'RA Companion v0.4.8' \
+              --title 'RA Companion v0.5.0' \
               --notes-file release-notes.md \
               --latest
           fi
