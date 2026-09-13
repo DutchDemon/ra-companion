@@ -17,7 +17,7 @@ try {
 }
 
 $patchHash = (Get-FileHash $patchPath -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($patchHash -ne '369750344cb06956493ca402837b343768f026b035d79b1a7143388675512f70') {
+if ($patchHash -ne '77dfeb04eb8ac32078ee8341f1cdf96d247951acac8e01b4e9e0c30b5c9211d6') {
   throw "v0.5.7 patch SHA256 mismatch: $patchHash"
 }
 
