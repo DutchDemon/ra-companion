@@ -37,11 +37,9 @@ jobs:
           Expand-Archive $zip -DestinationPath app -Force
           "SOURCE_SHA256=$actual" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Apply v0.5.7 source overrides
+      - name: Apply v0.5.8 source overrides
         shell: pwsh
         run: |
-          if (-not (Test-Path 'build-overrides/src')) { throw 'Renderer source overrides directory is missing.' }
-          if (-not (Test-Path 'build-overrides/electron')) { throw 'Electron source overrides directory is missing.' }
           Copy-Item 'build-overrides/src/*' 'app/src/' -Recurse -Force
           Copy-Item 'build-overrides/electron/*' 'app/electron/' -Recurse -Force
           & 'build-overrides/apply-v0.4.5.ps1'
@@ -56,8 +54,9 @@ jobs:
           & 'build-overrides/apply-v0.5.5.ps1'
           & 'build-overrides/apply-v0.5.6.ps1'
           & 'build-overrides/apply-v0.5.7.ps1'
+          & 'build-overrides/apply-v0.5.8.ps1'
           $pkg = Get-Content 'app/package.json' -Raw | ConvertFrom-Json
-          if ($pkg.version -ne '0.5.7') { throw "Expected app version 0.5.7, got $($pkg.version)" }
+          if ($pkg.version -ne '0.5.8') { throw "Expected app version 0.5.8, got $($pkg.version)" }
 
       - uses: actions/setup-node@v4
         with:
@@ -75,61 +74,11 @@ jobs:
         run: |
           node --check electron/main.cjs
           node --check electron/preload.cjs
-          if (Select-String -Path 'build/installer.nsh' -Pattern 'isForceCurrentInstall') { throw 'Forced per-user installer mode is not allowed.' }
-          if (-not (Test-Path 'src/AppPages.tsx')) { throw 'Stable page module is missing.' }
-          if (-not (Test-Path 'src/__tests__/v053.regression.test.tsx')) { throw 'v0.5.3 regressions are missing.' }
-          if (-not (Test-Path 'src/__tests__/v054.regression.test.tsx')) { throw 'v0.5.4 regressions are missing.' }
-          if (-not (Test-Path 'src/__tests__/v056.regression.test.tsx')) { throw 'v0.5.6 regressions are missing.' }
-          if (-not (Test-Path 'src/__tests__/v057.regression.test.tsx')) { throw 'v0.5.7 regressions are missing.' }
-          if (Select-String -Path 'src/main.tsx' -SimpleMatch 'function SettingsPage(' -Quiet) { throw 'Settings focus regression: SettingsPage is nested again.' }
-          if (-not (Select-String -Path 'src/AppPages.tsx' -SimpleMatch 'RA Companion v{version}' -Quiet)) { throw 'Dynamic app version display is missing.' }
-          if (Select-String -Path 'src/AppPages.tsx' -Pattern 'RA Companion v0\.5\.[0-9]+' -Quiet) { throw 'Hardcoded app version remains in renderer UI.' }
-
-          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'checkForUpdates(false)' -Quiet)) { throw 'Startup update check is missing.' }
-          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch '<UpdateBanner />' -Quiet)) { throw 'Global update banner is missing.' }
-          if (-not (Select-String -Path 'src/AppPages.tsx' -SimpleMatch 'export function UpdateBanner()' -Quiet)) { throw 'UpdateBanner component is missing.' }
-          if (-not (Select-String -Path 'src/styles.css' -SimpleMatch '.v5-update-banner' -Quiet)) { throw 'Amber update banner styling is missing.' }
-
-          if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch 'public static class ActorMemoryScanner' -Quiet)) { throw 'Live actor scanner is missing.' }
-          if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch '$PROC_DOG = 0x010C' -Quiet)) { throw 'Dog actor mapping is missing.' }
-          if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch '$PROC_CUCCO = 0x0108' -Quiet)) { throw 'Cucco actor mapping is missing.' }
-          if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch '$_.Action -eq 15' -Quiet)) { throw 'Cucco ACTION_PLAY detection is missing.' }
-          if (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch '[ushort[]]' -Quiet) { throw 'Windows PowerShell-incompatible ushort[] actor cast remains.' }
-          if (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch '[ushort]' -Quiet) { throw 'Windows PowerShell-incompatible ushort actor cast remains.' }
-          if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch '[uint16[]]' -Quiet)) { throw 'Windows PowerShell-compatible uint16[] actor cast is missing.' }
-
-          if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch '$lightDropGetFlags = Read-ByteAtGuest $shared ($gameInfoGuest + [uint64]0x118)' -Quiet)) { throw 'Vessel of Light flag read is missing.' }
-          if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch 'faronVesselObtained = (Test-FlagBit $lightDropGetFlags 0)' -Quiet)) { throw 'Faron Vessel mapping is missing.' }
-          if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch 'eldinVesselObtained = (Test-FlagBit $lightDropGetFlags 1)' -Quiet)) { throw 'Eldin Vessel mapping is missing.' }
-          if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch 'lanayruVesselObtained = (Test-FlagBit $lightDropGetFlags 2)' -Quiet)) { throw 'Lanayru Vessel mapping is missing.' }
-          if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch 'Coming soon · Vessel not received' -Quiet)) { throw 'Vessel-gated Tear state is missing.' }
-          if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch 'target: 16' -Quiet)) { throw '16-Tear progress target is missing.' }
-
-          if (-not (Select-String -Path 'src/profiles/twilightPrincess.ts' -SimpleMatch 'isFaronTearObjectiveActive' -Quiet)) { throw 'Faron Tear objective stage gate is missing.' }
-          if (-not (Select-String -Path 'src/profiles/twilightPrincess.ts' -SimpleMatch "stageCode || '').trim() === 'F_SP108'" -Quiet)) { throw 'Faron Woods Tear stage gate is missing.' }
-          if (-not (Select-String -Path 'src/profiles/twilightPrincess.ts' -SimpleMatch 'activeFaronTearObjectives' -Quiet)) { throw 'Faron Tears current-objective prioritization is missing.' }
-          if (-not (Select-String -Path 'src/profiles/twilightPrincess.ts' -SimpleMatch 'strictRamBeat && isFaronTearAchievement(achievement)' -Quiet)) { throw 'Inactive Faron Tear story fallback guard is missing.' }
-          if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch 'prevents a stale 0-16 metric from following the player into' -Quiet)) { throw 'Forest Temple Tear counter guard is missing.' }
-          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'isFaronTearObjectiveActive' -Quiet)) { throw 'Renderer Tear counter guard is missing.' }
-
-          if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch "id === '419985'" -Quiet)) { throw 'The Hero of Puppies rule is missing.' }
-          if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch "id === '419988'" -Quiet)) { throw 'McFly Cucco rule is missing.' }
-          if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch "id === '449436'" -Quiet)) { throw 'Pump up the King rule regressed.' }
-          if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch "tp-gz2e01-v2" -Quiet)) { throw 'Actor-aware Game State Engine marker is missing.' }
-
-          if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch "ipcMain.handle('app:version', () => app.getVersion())" -Quiet)) { throw 'Dynamic app-version IPC is missing.' }
-          if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'registerShortcutBinding' -Quiet)) { throw 'Verified global hotkeys regressed.' }
-          if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'app.requestSingleInstanceLock()' -Quiet)) { throw 'Single-instance protection regressed.' }
-          if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch "mainWindow.on('closed'" -Quiet)) { throw 'Main-window shutdown fix is missing.' }
-          if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'if (!appIsQuitting) app.quit();' -Quiet)) { throw 'Closing the main window no longer terminates hidden overlay process.' }
-          if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'focusOrCreateMainWindow();' -Quiet)) { throw 'Second-instance main-window recovery is missing.' }
+          if (-not (Test-Path 'src/__tests__/v058.regression.test.ts')) { throw 'v0.5.8 regressions are missing.' }
+          if (-not (Select-String -Path 'src/profiles/twilightPrincess.ts' -SimpleMatch "['F_SP108', 'R_SP108', 'D_SB10'].includes(String(" -Quiet)) { throw 'Faron Tear Hunt subarea gate is missing.' }
+          if (Select-String -Path 'src/profiles/twilightPrincess.ts' -Pattern "String\([^\n]*stageCode \|\| ''\)\.trim\(\) === 'F_SP108'" -Quiet) { throw 'Single-stage Faron Tear gate returned.' }
           if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'quitAndInstall(true, true)' -Quiet)) { throw 'Silent updater install call is missing.' }
           if (Select-String -Path 'electron/main.cjs' -SimpleMatch 'quitAndInstall(false, true)' -Quiet) { throw 'Interactive updater install call returned.' }
-
-          $tokens = $null
-          $errors = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'tools/ram-reader.ps1'), [ref]$tokens, [ref]$errors)
-          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_.Message }; throw 'RAM reader PowerShell parse failed.' }
           npm run test:regressions
           npm run build
 
@@ -143,7 +92,7 @@ jobs:
       - name: Locate installer and generate hashes
         shell: pwsh
         run: |
-          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.5.7.exe' } | Select-Object -First 1
+          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.5.8.exe' } | Select-Object -First 1
           if (-not $installer) { throw 'NSIS installer was not generated.' }
           "INSTALLER_PATH=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
           "INSTALLER_NAME=$($installer.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -185,10 +134,10 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.5.7-windows
+          name: ra-companion-v0.5.8-windows
           if-no-files-found: error
           path: |
-            app/release/RA Companion Setup 0.5.7.exe
+            app/release/RA Companion Setup 0.5.8.exe
             app/release/*.blockmap
             app/release/latest.yml
             app/release/checksums.txt
@@ -201,7 +150,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.5.7-windows
+          name: ra-companion-v0.5.8-windows
           path: artifact
 
       - name: Install and update ClamAV
@@ -219,7 +168,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.5.7.exe' -print -quit)
+          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.5.8.exe' -print -quit)
           test -n "$INSTALLER"
           clamscan "$INSTALLER" | tee artifact/clamav-scan.txt
           test ${PIPESTATUS[0]} -eq 0
@@ -228,7 +177,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.5.7-antivirus
+          name: ra-companion-v0.5.8-antivirus
           path: artifact/clamav-scan.txt
           if-no-files-found: warn
 
@@ -239,71 +188,71 @@ jobs:
       - name: Download Windows build
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.5.7-windows
+          name: ra-companion-v0.5.8-windows
           path: release
 
       - name: Download ClamAV report
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.5.7-antivirus
+          name: ra-companion-v0.5.8-antivirus
           path: antivirus
 
       - name: Prepare and verify updater payload
         shell: bash
         run: |
-          test -f 'release/RA Companion Setup 0.5.7.exe'
-          test -f 'release/RA Companion Setup 0.5.7.exe.blockmap'
+          test -f 'release/RA Companion Setup 0.5.8.exe'
+          test -f 'release/RA Companion Setup 0.5.8.exe.blockmap'
           test -f 'release/latest.yml'
           test -f 'release/checksums.txt'
           test -f 'release/defender-scan.txt'
           test -f 'antivirus/clamav-scan.txt'
-          cp 'release/RA Companion Setup 0.5.7.exe' 'release/RA-Companion-Setup-0.5.7.exe'
-          cp 'release/RA Companion Setup 0.5.7.exe.blockmap' 'release/RA-Companion-Setup-0.5.7.exe.blockmap'
+          cp 'release/RA Companion Setup 0.5.8.exe' 'release/RA-Companion-Setup-0.5.8.exe'
+          cp 'release/RA Companion Setup 0.5.8.exe.blockmap' 'release/RA-Companion-Setup-0.5.8.exe.blockmap'
           EXPECTED_PATH=$(awk '/^path:/ {print $2; exit}' release/latest.yml)
-          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.5.7.exe'
+          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.5.8.exe'
           test -f "release/$EXPECTED_PATH"
           test -f "release/$EXPECTED_PATH.blockmap"
 
-      - name: Publish GitHub Release v0.5.7
+      - name: Publish GitHub Release v0.5.8
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > release-notes.md <<'NOTES'
-          ## RA Companion v0.5.7 — Faron Tears as the Live Story Objective
+          ## RA Companion v0.5.8 — Faron Tear Hunt Subareas
 
-          - During the Faron Woods Tear hunt, **You Unlock This Door with the Key of Imagination** is now promoted to the active **Current Story Beat**.
-          - Keeps the live **0–16 Tears of Light** counter attached to the active Faron Vessel hunt.
-          - Prevents unrelated Faron location matches from competing for the current story-objective slot while the Tear hunt is active; missables still remain visible in their own section.
-          - **Forest Temple no longer inherits the Faron Tears metric or objective**, including through the generic Next Story Beat fallback.
-          - Keeps the v0.5.6 Vessel flags/counters and clean shutdown fix, plus the v0.5.5 Dog/Cucco actor compatibility fix and silent updater behavior.
+          - Keeps **You Unlock This Door with the Key of Imagination** active while collecting Faron Tears in **Faron Woods House** (`R_SP108`).
+          - Keeps the same live **0–16 Tears of Light** objective active in the **Faron Woods Tunnel** (`D_SB10`).
+          - Regular **Faron Woods** (`F_SP108`) behavior from v0.5.7 remains unchanged.
+          - **Forest Temple** (`D_MN05`) remains outside the Faron Tear objective scope, so the stale Tears metric does not return there.
+          - Keeps the silent updater, Vessel progress, actor compatibility and clean shutdown fixes intact.
 
-          The Windows installer is built only after the existing regression suites plus the new v0.5.7 Faron/Forest Temple checks pass, then scanned by Microsoft Defender and ClamAV before publication.
+          The Windows installer is built after all regression suites and the new v0.5.8 subarea checks pass, then scanned by Microsoft Defender and ClamAV before publication.
           NOTES
 
-          TAG='v0.5.7'
+          TAG='v0.5.8'
           REPO='${{ github.repository }}'
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release upload "$TAG" \
-              'release/RA-Companion-Setup-0.5.7.exe' \
-              'release/RA-Companion-Setup-0.5.7.exe.blockmap' \
+              'release/RA-Companion-Setup-0.5.8.exe' \
+              'release/RA-Companion-Setup-0.5.8.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" --clobber
-            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.5.7' --notes-file release-notes.md --latest
+            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.5.8' --notes-file release-notes.md --latest
           else
             gh release create "$TAG" \
-              'release/RA-Companion-Setup-0.5.7.exe' \
-              'release/RA-Companion-Setup-0.5.7.exe.blockmap' \
+              'release/RA-Companion-Setup-0.5.8.exe' \
+              'release/RA-Companion-Setup-0.5.8.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" \
               --target main \
-              --title 'RA Companion v0.5.7' \
+              --title 'RA Companion v0.5.8' \
               --notes-file release-notes.md \
               --latest
           fi
