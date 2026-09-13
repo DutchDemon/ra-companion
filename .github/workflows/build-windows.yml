@@ -10,7 +10,7 @@ on:
       - '.github/workflows/build-windows.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -173,8 +173,6 @@ jobs:
   release:
     needs: [build, clamav]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Download Windows build
         uses: actions/download-artifact@v4
@@ -249,7 +247,7 @@ jobs:
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" \
-              --target '${{ github.sha }}' \
+              --target main \
               --title 'RA Companion v0.4.6' \
               --notes-file release-notes.md \
               --latest
