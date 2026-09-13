@@ -37,7 +37,7 @@ jobs:
           Expand-Archive $zip -DestinationPath app -Force
           "SOURCE_SHA256=$actual" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Apply v0.5.3 source overrides
+      - name: Apply v0.5.4 source overrides
         shell: pwsh
         run: |
           if (-not (Test-Path 'build-overrides/src')) { throw 'Renderer source overrides directory is missing.' }
@@ -52,11 +52,9 @@ jobs:
           & 'build-overrides/apply-v0.5.1.ps1'
           & 'build-overrides/apply-v0.5.2.ps1'
           & 'build-overrides/apply-v0.5.3.ps1'
-          if (-not (Test-Path 'app/src/profiles/twilightPrincessGuide.ts')) { throw 'Twilight Princess guide module was not applied.' }
-          if (-not (Test-Path 'app/src/profiles/twilightPrincessState.ts')) { throw 'Twilight Princess game-state module was not applied.' }
-          if (-not (Test-Path 'app/src/AppPages.tsx')) { throw 'Stable top-level page module was not applied.' }
+          & 'build-overrides/apply-v0.5.4.ps1'
           $pkg = Get-Content 'app/package.json' -Raw | ConvertFrom-Json
-          if ($pkg.version -ne '0.5.3') { throw "Expected app version 0.5.3, got $($pkg.version)" }
+          if ($pkg.version -ne '0.5.4') { throw "Expected app version 0.5.4, got $($pkg.version)" }
 
       - uses: actions/setup-node@v4
         with:
@@ -75,32 +73,39 @@ jobs:
           node --check electron/main.cjs
           node --check electron/preload.cjs
           if (Select-String -Path 'build/installer.nsh' -Pattern 'isForceCurrentInstall') { throw 'Forced per-user installer mode is not allowed.' }
-          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'className="v5-app-shell"' -Quiet)) { throw 'v0.5 app shell is missing.' }
-          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'buildTwilightAchievementStates' -Quiet)) { throw 'Full-set Game State Engine UI wiring is missing.' }
-          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch "String(liveRam?.gameCode || '') === 'GZ2E01'" -Quiet)) { throw 'USA-only GZ2E01 detection is missing.' }
-          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'deepLiveAchievements' -Quiet)) { throw 'Deep live RAM opportunities are not surfaced.' }
-          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'whatMattersAchievements' -Quiet)) { throw 'Deep missables are not promoted into What Matters Now.' }
-          if (Select-String -Path 'src/main.tsx' -SimpleMatch 'function SettingsPage(' -Quiet) { throw 'SettingsPage is still nested in App and can lose focus on snapshot refresh.' }
-          if (Select-String -Path 'src/main.tsx' -SimpleMatch 'function Dashboard(' -Quiet) { throw 'Dashboard is still nested in App.' }
-          if (-not (Select-String -Path 'src/AppPages.tsx' -SimpleMatch 'export function SettingsPage()' -Quiet)) { throw 'Top-level SettingsPage is missing.' }
-          if (-not (Select-String -Path 'src/AppPages.tsx' -SimpleMatch 'RA Companion v{version}' -Quiet)) { throw 'Dynamic update-card version rendering is missing.' }
-          if (Select-String -Path 'src/AppPages.tsx' -Pattern 'RA Companion v0\.5\.[0-9]+' -Quiet) { throw 'Hardcoded app version remains in renderer page UI.' }
-          if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch "id === '449436'" -Quiet)) { throw 'Pump up the King achievement-ID rule is missing.' }
-          if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch 'bottleSlotPresent' -Quiet)) { throw 'Filled-bottle ownership fallback is missing.' }
-          if (-not (Select-String -Path 'src/profiles/twilightPrincessGuide.ts' -SimpleMatch "'pump up the king': guide(" -Quiet)) { throw 'Pump up the King guide mapping is missing.' }
+          if (-not (Test-Path 'src/AppPages.tsx')) { throw 'Stable page module is missing.' }
+          if (-not (Test-Path 'src/__tests__/v053.regression.test.tsx')) { throw 'v0.5.3 regressions are missing.' }
+          if (-not (Test-Path 'src/__tests__/v054.regression.test.tsx')) { throw 'v0.5.4 regressions are missing.' }
+          if (Select-String -Path 'src/main.tsx' -SimpleMatch 'function SettingsPage(' -Quiet) { throw 'Settings focus regression: SettingsPage is nested again.' }
+          if (-not (Select-String -Path 'src/AppPages.tsx' -SimpleMatch 'RA Companion v{version}' -Quiet)) { throw 'Dynamic app version display is missing.' }
+          if (Select-String -Path 'src/AppPages.tsx' -Pattern 'RA Companion v0\.5\.[0-9]+' -Quiet) { throw 'Hardcoded app version remains in renderer UI.' }
+
+          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'checkForUpdates(false)' -Quiet)) { throw 'Startup update check is missing.' }
+          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch '<UpdateBanner />' -Quiet)) { throw 'Global update banner is missing.' }
+          if (-not (Select-String -Path 'src/AppPages.tsx' -SimpleMatch 'export function UpdateBanner()' -Quiet)) { throw 'UpdateBanner component is missing.' }
+          if (-not (Select-String -Path 'src/AppPages.tsx' -SimpleMatch 'Update now' -Quiet)) { throw 'Update-now button is missing.' }
+          if (-not (Select-String -Path 'src/AppPages.tsx' -SimpleMatch 'Later' -Quiet)) { throw 'Session dismiss action is missing.' }
+          if (-not (Select-String -Path 'src/styles.css' -SimpleMatch '.v5-update-banner' -Quiet)) { throw 'Amber update banner styling is missing.' }
+
+          if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch 'public static class ActorMemoryScanner' -Quiet)) { throw 'Live actor scanner is missing.' }
+          if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch '$PROC_DOG = 0x010C' -Quiet)) { throw 'Dog actor mapping is missing.' }
+          if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch '$PROC_CUCCO = 0x0108' -Quiet)) { throw 'Cucco actor mapping is missing.' }
+          if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch '$_.Action -eq 15' -Quiet)) { throw 'Cucco ACTION_PLAY detection is missing.' }
+          if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch "id === '419985'" -Quiet)) { throw 'The Hero of Puppies rule is missing.' }
+          if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch "id === '419988'" -Quiet)) { throw 'McFly Cucco rule is missing.' }
+          if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch "id === '449436'" -Quiet)) { throw 'Pump up the King rule regressed.' }
+          if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch "tp-gz2e01-v2" -Quiet)) { throw 'Actor-aware Game State Engine marker is missing.' }
+
           if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch "ipcMain.handle('app:version', () => app.getVersion())" -Quiet)) { throw 'Dynamic app-version IPC is missing.' }
-          if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'registerShortcutBinding' -Quiet)) { throw 'Verified shortcut registration is missing.' }
-          if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'app.requestSingleInstanceLock()' -Quiet)) { throw 'Single-instance shortcut protection is missing.' }
-          if (-not (Select-String -Path 'electron/preload.cjs' -SimpleMatch 'getAppVersion' -Quiet)) { throw 'App-version preload API is missing.' }
-          if (-not (Select-String -Path 'electron/preload.cjs' -SimpleMatch 'getShortcutState' -Quiet)) { throw 'Shortcut status preload API is missing.' }
-          if (-not (Select-String -Path 'src/styles.css' -SimpleMatch 'v5-account-connection' -Quiet)) { throw 'Settings interaction CSS is missing.' }
-          if (-not (Test-Path 'src/__tests__/v053.regression.test.tsx')) { throw 'v0.5.3 regression tests are missing.' }
+          if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'registerShortcutBinding' -Quiet)) { throw 'Verified global hotkeys regressed.' }
+          if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'app.requestSingleInstanceLock()' -Quiet)) { throw 'Single-instance protection regressed.' }
+          if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'quitAndInstall(true, true)' -Quiet)) { throw 'Silent updater install call is missing.' }
+          if (Select-String -Path 'electron/main.cjs' -SimpleMatch 'quitAndInstall(false, true)' -Quiet) { throw 'Interactive updater install call returned.' }
+
           $tokens = $null
           $errors = $null
           [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'tools/ram-reader.ps1'), [ref]$tokens, [ref]$errors)
           if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_.Message }; throw 'RAM reader PowerShell parse failed.' }
-          if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'quitAndInstall(true, true)' -Quiet)) { throw 'Silent updater install call is missing.' }
-          if (Select-String -Path 'electron/main.cjs' -SimpleMatch 'quitAndInstall(false, true)' -Quiet) { throw 'Interactive updater install call is still present.' }
           npm run test:regressions
           npm run build
 
@@ -114,7 +119,7 @@ jobs:
       - name: Locate installer and generate hashes
         shell: pwsh
         run: |
-          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.5.3.exe' } | Select-Object -First 1
+          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.5.4.exe' } | Select-Object -First 1
           if (-not $installer) { throw 'NSIS installer was not generated.' }
           "INSTALLER_PATH=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
           "INSTALLER_NAME=$($installer.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -156,10 +161,10 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.5.3-windows
+          name: ra-companion-v0.5.4-windows
           if-no-files-found: error
           path: |
-            app/release/RA Companion Setup 0.5.3.exe
+            app/release/RA Companion Setup 0.5.4.exe
             app/release/*.blockmap
             app/release/latest.yml
             app/release/checksums.txt
@@ -172,7 +177,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.5.3-windows
+          name: ra-companion-v0.5.4-windows
           path: artifact
 
       - name: Install and update ClamAV
@@ -190,7 +195,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.5.3.exe' -print -quit)
+          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.5.4.exe' -print -quit)
           test -n "$INSTALLER"
           clamscan "$INSTALLER" | tee artifact/clamav-scan.txt
           test ${PIPESTATUS[0]} -eq 0
@@ -199,7 +204,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.5.3-antivirus
+          name: ra-companion-v0.5.4-antivirus
           path: artifact/clamav-scan.txt
           if-no-files-found: warn
 
@@ -210,76 +215,74 @@ jobs:
       - name: Download Windows build
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.5.3-windows
+          name: ra-companion-v0.5.4-windows
           path: release
 
       - name: Download ClamAV report
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.5.3-antivirus
+          name: ra-companion-v0.5.4-antivirus
           path: antivirus
 
       - name: Prepare and verify updater payload
         shell: bash
         run: |
-          test -f 'release/RA Companion Setup 0.5.3.exe'
-          test -f 'release/RA Companion Setup 0.5.3.exe.blockmap'
+          test -f 'release/RA Companion Setup 0.5.4.exe'
+          test -f 'release/RA Companion Setup 0.5.4.exe.blockmap'
           test -f 'release/latest.yml'
           test -f 'release/checksums.txt'
           test -f 'release/defender-scan.txt'
           test -f 'antivirus/clamav-scan.txt'
-
-          cp 'release/RA Companion Setup 0.5.3.exe' 'release/RA-Companion-Setup-0.5.3.exe'
-          cp 'release/RA Companion Setup 0.5.3.exe.blockmap' 'release/RA-Companion-Setup-0.5.3.exe.blockmap'
-
+          cp 'release/RA Companion Setup 0.5.4.exe' 'release/RA-Companion-Setup-0.5.4.exe'
+          cp 'release/RA Companion Setup 0.5.4.exe.blockmap' 'release/RA-Companion-Setup-0.5.4.exe.blockmap'
           EXPECTED_PATH=$(awk '/^path:/ {print $2; exit}' release/latest.yml)
-          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.5.3.exe'
+          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.5.4.exe'
           test -f "release/$EXPECTED_PATH"
           test -f "release/$EXPECTED_PATH.blockmap"
 
-      - name: Publish GitHub Release v0.5.3
+      - name: Publish GitHub Release v0.5.4
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > release-notes.md <<'NOTES'
-          ## RA Companion v0.5.3 — Runtime Reliability Fixes
+          ## RA Companion v0.5.4 — Update Banner & Live Actors
 
-          - Fixes Settings → Account Connection losing keyboard focus every live refresh. Page components now have stable React identities instead of being recreated inside the 700 ms snapshot render loop.
-          - Adds a regression test that focuses the Username field, forces repeated parent refresh renders and verifies the same input keeps focus.
-          - Removes hardcoded version labels from the desktop UI. The sidebar and Updates card now read the real packaged version from Electron (`app.getVersion()`).
-          - Hardens **Pump up the King!** using its RA achievement ID (449436), a dedicated guide mapping and direct bottle-slot fallback, so filled bottles count even if an aggregate bottle counter is stale.
-          - Promotes deep RAM-backed missables into **What Matters Now** and Current Game, so an achievement proven available by RAM is not discarded just because the older context/guide bucket missed it.
-          - Reduces unrelated challenge-run noise: a 3-heart challenge that is merely still eligible stays tracked instead of being treated as actively in progress everywhere.
-          - Preserves the verified global-hotkey registration/fallback and single-instance protections introduced in v0.5.2.
+          - Checks for updates automatically on every app start using the existing updater flow.
+          - Shows a clear amber/yellow banner across the top when a newer RA Companion version is available, with **Update now** and session-only **Later** actions.
+          - Keeps startup network failures silent so an unavailable update service never blocks normal app startup.
+          - Adds the first generic read-only Twilight Princess live actor scan for GZ2E01, designed to feed achievement context without writing game memory.
+          - **The Hero of Puppies** now becomes relevant when a live Dog actor is in the current room and detects when Link is carrying a puppy.
+          - **What's the Matter, McFly? Chicken??** now becomes relevant when a live Cucco actor is in the current room and detects the game's real `ACTION_PLAY` Cucco-control state.
+          - Exposes nearby Dog/Cucco counts in Live Context and establishes the actor-state layer for future NPC, enemy, object and boss achievement rules.
+          - Preserves the v0.5.3 focus, dynamic-version, Pump up the King, hotkey and single-instance reliability fixes.
 
-          The Windows installer was compiled after the focus/Pump regression suite passed, then scanned successfully by Microsoft Defender and ClamAV in CI before publication.
+          The Windows installer is built only after the v0.5.3 and v0.5.4 regression suites pass, then scanned by Microsoft Defender and ClamAV before publication.
           NOTES
 
-          TAG='v0.5.3'
+          TAG='v0.5.4'
           REPO='${{ github.repository }}'
-
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release upload "$TAG" \
-              'release/RA-Companion-Setup-0.5.3.exe' \
-              'release/RA-Companion-Setup-0.5.3.exe.blockmap' \
+              'release/RA-Companion-Setup-0.5.4.exe' \
+              'release/RA-Companion-Setup-0.5.4.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" --clobber
-            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.5.3' --notes-file release-notes.md --latest
+            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.5.4' --notes-file release-notes.md --latest
           else
             gh release create "$TAG" \
-              'release/RA-Companion-Setup-0.5.3.exe' \
-              'release/RA-Companion-Setup-0.5.3.exe.blockmap' \
+              'release/RA-Companion-Setup-0.5.4.exe' \
+              'release/RA-Companion-Setup-0.5.4.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" \
               --target main \
-              --title 'RA Companion v0.5.3' \
+              --title 'RA Companion v0.5.4' \
               --notes-file release-notes.md \
               --latest
           fi
