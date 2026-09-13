@@ -37,7 +37,7 @@ jobs:
           Expand-Archive $zip -DestinationPath app -Force
           "SOURCE_SHA256=$actual" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Apply v0.5.6 source overrides
+      - name: Apply v0.5.7 source overrides
         shell: pwsh
         run: |
           if (-not (Test-Path 'build-overrides/src')) { throw 'Renderer source overrides directory is missing.' }
@@ -55,8 +55,9 @@ jobs:
           & 'build-overrides/apply-v0.5.4.ps1'
           & 'build-overrides/apply-v0.5.5.ps1'
           & 'build-overrides/apply-v0.5.6.ps1'
+          & 'build-overrides/apply-v0.5.7.ps1'
           $pkg = Get-Content 'app/package.json' -Raw | ConvertFrom-Json
-          if ($pkg.version -ne '0.5.6') { throw "Expected app version 0.5.6, got $($pkg.version)" }
+          if ($pkg.version -ne '0.5.7') { throw "Expected app version 0.5.7, got $($pkg.version)" }
 
       - uses: actions/setup-node@v4
         with:
@@ -79,6 +80,7 @@ jobs:
           if (-not (Test-Path 'src/__tests__/v053.regression.test.tsx')) { throw 'v0.5.3 regressions are missing.' }
           if (-not (Test-Path 'src/__tests__/v054.regression.test.tsx')) { throw 'v0.5.4 regressions are missing.' }
           if (-not (Test-Path 'src/__tests__/v056.regression.test.tsx')) { throw 'v0.5.6 regressions are missing.' }
+          if (-not (Test-Path 'src/__tests__/v057.regression.test.tsx')) { throw 'v0.5.7 regressions are missing.' }
           if (Select-String -Path 'src/main.tsx' -SimpleMatch 'function SettingsPage(' -Quiet) { throw 'Settings focus regression: SettingsPage is nested again.' }
           if (-not (Select-String -Path 'src/AppPages.tsx' -SimpleMatch 'RA Companion v{version}' -Quiet)) { throw 'Dynamic app version display is missing.' }
           if (Select-String -Path 'src/AppPages.tsx' -Pattern 'RA Companion v0\.5\.[0-9]+' -Quiet) { throw 'Hardcoded app version remains in renderer UI.' }
@@ -102,6 +104,13 @@ jobs:
           if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch 'lanayruVesselObtained = (Test-FlagBit $lightDropGetFlags 2)' -Quiet)) { throw 'Lanayru Vessel mapping is missing.' }
           if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch 'Coming soon · Vessel not received' -Quiet)) { throw 'Vessel-gated Tear state is missing.' }
           if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch 'target: 16' -Quiet)) { throw '16-Tear progress target is missing.' }
+
+          if (-not (Select-String -Path 'src/profiles/twilightPrincess.ts' -SimpleMatch 'isFaronTearObjectiveActive' -Quiet)) { throw 'Faron Tear objective stage gate is missing.' }
+          if (-not (Select-String -Path 'src/profiles/twilightPrincess.ts' -SimpleMatch "stageCode || '').trim() === 'F_SP108'" -Quiet)) { throw 'Faron Woods Tear stage gate is missing.' }
+          if (-not (Select-String -Path 'src/profiles/twilightPrincess.ts' -SimpleMatch 'activeFaronTearObjectives' -Quiet)) { throw 'Faron Tears current-objective prioritization is missing.' }
+          if (-not (Select-String -Path 'src/profiles/twilightPrincess.ts' -SimpleMatch 'strictRamBeat && isFaronTearAchievement(achievement)' -Quiet)) { throw 'Inactive Faron Tear story fallback guard is missing.' }
+          if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch 'prevents a stale 0-16 metric from following the player into' -Quiet)) { throw 'Forest Temple Tear counter guard is missing.' }
+          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'isFaronTearObjectiveActive' -Quiet)) { throw 'Renderer Tear counter guard is missing.' }
 
           if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch "id === '419985'" -Quiet)) { throw 'The Hero of Puppies rule is missing.' }
           if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch "id === '419988'" -Quiet)) { throw 'McFly Cucco rule is missing.' }
@@ -134,7 +143,7 @@ jobs:
       - name: Locate installer and generate hashes
         shell: pwsh
         run: |
-          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.5.6.exe' } | Select-Object -First 1
+          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.5.7.exe' } | Select-Object -First 1
           if (-not $installer) { throw 'NSIS installer was not generated.' }
           "INSTALLER_PATH=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
           "INSTALLER_NAME=$($installer.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -176,10 +185,10 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.5.6-windows
+          name: ra-companion-v0.5.7-windows
           if-no-files-found: error
           path: |
-            app/release/RA Companion Setup 0.5.6.exe
+            app/release/RA Companion Setup 0.5.7.exe
             app/release/*.blockmap
             app/release/latest.yml
             app/release/checksums.txt
@@ -192,7 +201,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.5.6-windows
+          name: ra-companion-v0.5.7-windows
           path: artifact
 
       - name: Install and update ClamAV
@@ -210,7 +219,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.5.6.exe' -print -quit)
+          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.5.7.exe' -print -quit)
           test -n "$INSTALLER"
           clamscan "$INSTALLER" | tee artifact/clamav-scan.txt
           test ${PIPESTATUS[0]} -eq 0
@@ -219,7 +228,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.5.6-antivirus
+          name: ra-companion-v0.5.7-antivirus
           path: artifact/clamav-scan.txt
           if-no-files-found: warn
 
@@ -230,74 +239,71 @@ jobs:
       - name: Download Windows build
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.5.6-windows
+          name: ra-companion-v0.5.7-windows
           path: release
 
       - name: Download ClamAV report
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.5.6-antivirus
+          name: ra-companion-v0.5.7-antivirus
           path: antivirus
 
       - name: Prepare and verify updater payload
         shell: bash
         run: |
-          test -f 'release/RA Companion Setup 0.5.6.exe'
-          test -f 'release/RA Companion Setup 0.5.6.exe.blockmap'
+          test -f 'release/RA Companion Setup 0.5.7.exe'
+          test -f 'release/RA Companion Setup 0.5.7.exe.blockmap'
           test -f 'release/latest.yml'
           test -f 'release/checksums.txt'
           test -f 'release/defender-scan.txt'
           test -f 'antivirus/clamav-scan.txt'
-          cp 'release/RA Companion Setup 0.5.6.exe' 'release/RA-Companion-Setup-0.5.6.exe'
-          cp 'release/RA Companion Setup 0.5.6.exe.blockmap' 'release/RA-Companion-Setup-0.5.6.exe.blockmap'
+          cp 'release/RA Companion Setup 0.5.7.exe' 'release/RA-Companion-Setup-0.5.7.exe'
+          cp 'release/RA Companion Setup 0.5.7.exe.blockmap' 'release/RA-Companion-Setup-0.5.7.exe.blockmap'
           EXPECTED_PATH=$(awk '/^path:/ {print $2; exit}' release/latest.yml)
-          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.5.6.exe'
+          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.5.7.exe'
           test -f "release/$EXPECTED_PATH"
           test -f "release/$EXPECTED_PATH.blockmap"
 
-      - name: Publish GitHub Release v0.5.6
+      - name: Publish GitHub Release v0.5.7
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > release-notes.md <<'NOTES'
-          ## RA Companion v0.5.6 — Vessel of Light Progress & Clean Relaunch
+          ## RA Companion v0.5.7 — Faron Tears as the Live Story Objective
 
-          - Adds live **Vessel of Light** state for Faron, Eldin and Lanayru using each province's own persistent vessel flag.
-          - **You Unlock This Door with the Key of Imagination** now stays **Coming soon** until the Faron Vessel of Light is received, then changes to **In progress**.
-          - Tracks the original GameCube/Wii Tear requirement live as **0–16 Tears of Light** and shows the progress counter in the achievement UI/overlay.
-          - Uses separate Tear counters for Faron, Eldin and Lanayru, ready for the later province achievements as their own Vessel quests become active.
-          - When a Vessel reaches 16/16, the achievement changes to a pending/full-Vessel state until RetroAchievements confirms the unlock.
-          - Fixes RA Companion sometimes remaining alive as a hidden overlay process after the visible window was closed.
-          - Closing the main window now cleanly exits the app, RAM reader and global shortcuts; launching RA Companion again can recreate/focus the main window if an old instance somehow remains.
-          - Keeps the v0.5.5 Dog/Cucco actor compatibility fix and existing updater/hotkey fallback behavior intact.
+          - During the Faron Woods Tear hunt, **You Unlock This Door with the Key of Imagination** is now promoted to the active **Current Story Beat**.
+          - Keeps the live **0–16 Tears of Light** counter attached to the active Faron Vessel hunt.
+          - Prevents unrelated Faron location matches from competing for the current story-objective slot while the Tear hunt is active; missables still remain visible in their own section.
+          - **Forest Temple no longer inherits the Faron Tears metric or objective**, including through the generic Next Story Beat fallback.
+          - Keeps the v0.5.6 Vessel flags/counters and clean shutdown fix, plus the v0.5.5 Dog/Cucco actor compatibility fix and silent updater behavior.
 
-          The Windows installer is built only after the existing regression suites plus the new v0.5.6 Vessel/lifecycle checks pass, then scanned by Microsoft Defender and ClamAV before publication.
+          The Windows installer is built only after the existing regression suites plus the new v0.5.7 Faron/Forest Temple checks pass, then scanned by Microsoft Defender and ClamAV before publication.
           NOTES
 
-          TAG='v0.5.6'
+          TAG='v0.5.7'
           REPO='${{ github.repository }}'
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release upload "$TAG" \
-              'release/RA-Companion-Setup-0.5.6.exe' \
-              'release/RA-Companion-Setup-0.5.6.exe.blockmap' \
+              'release/RA-Companion-Setup-0.5.7.exe' \
+              'release/RA-Companion-Setup-0.5.7.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" --clobber
-            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.5.6' --notes-file release-notes.md --latest
+            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.5.7' --notes-file release-notes.md --latest
           else
             gh release create "$TAG" \
-              'release/RA-Companion-Setup-0.5.6.exe' \
-              'release/RA-Companion-Setup-0.5.6.exe.blockmap' \
+              'release/RA-Companion-Setup-0.5.7.exe' \
+              'release/RA-Companion-Setup-0.5.7.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" \
               --target main \
-              --title 'RA Companion v0.5.6' \
+              --title 'RA Companion v0.5.7' \
               --notes-file release-notes.md \
               --latest
           fi
