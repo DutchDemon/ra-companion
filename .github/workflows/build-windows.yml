@@ -153,3 +153,75 @@ jobs:
           name: ra-companion-v0.4.4-antivirus
           path: artifact/clamav-scan.txt
           if-no-files-found: warn
+
+  release:
+    needs: [build, clamav]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: ra-companion-v0.4.4-windows
+          path: release
+
+      - name: Download ClamAV report
+        uses: actions/download-artifact@v4
+        with:
+          name: ra-companion-v0.4.4-antivirus
+          path: antivirus
+
+      - name: Verify updater payload
+        shell: bash
+        run: |
+          test -f 'release/RA Companion Setup 0.4.4.exe'
+          test -f 'release/RA Companion Setup 0.4.4.exe.blockmap'
+          test -f 'release/latest.yml'
+          test -f 'release/checksums.txt'
+          test -f 'release/defender-scan.txt'
+          test -f 'antivirus/clamav-scan.txt'
+
+      - name: Publish GitHub Release v0.4.4
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > release-notes.md <<'EOF'
+          ## RA Companion v0.4.4 — Context-Aware Missables
+
+          - Adds live context-aware missable filtering for Twilight Princess.
+          - Reads Link form, player control, cutscene state, area/room context and selected story/event flags from Dolphin shared memory.
+          - Fixes early `Ordon't Worry` guidance so it is not shown while the player is Wolf Link.
+          - Keeps the standard assisted NSIS installer with per-user/per-machine choice and elevation support.
+          - Includes `latest.yml` and blockmap metadata for in-app updates through `electron-updater`.
+
+          The Windows installer was scanned successfully by Microsoft Defender and ClamAV in CI before this release was published.
+          EOF
+
+          TAG='v0.4.4'
+          REPO='${{ github.repository }}'
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" \
+              'release/RA Companion Setup 0.4.4.exe' \
+              'release/RA Companion Setup 0.4.4.exe.blockmap' \
+              'release/latest.yml' \
+              'release/checksums.txt' \
+              'release/defender-scan.txt' \
+              'antivirus/clamav-scan.txt' \
+              --repo "$REPO" --clobber
+            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.4.4' --notes-file release-notes.md --latest
+          else
+            gh release create "$TAG" \
+              'release/RA Companion Setup 0.4.4.exe' \
+              'release/RA Companion Setup 0.4.4.exe.blockmap' \
+              'release/latest.yml' \
+              'release/checksums.txt' \
+              'release/defender-scan.txt' \
+              'antivirus/clamav-scan.txt' \
+              --repo "$REPO" \
+              --target '${{ github.sha }}' \
+              --title 'RA Companion v0.4.4' \
+              --notes-file release-notes.md \
+              --latest
+          fi
