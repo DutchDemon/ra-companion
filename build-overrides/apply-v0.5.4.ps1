@@ -4,14 +4,22 @@ $patchArchive = 'build-overrides/v0.5.4.patch.gz.b64'
 if (-not (Test-Path $patchArchive)) { throw 'v0.5.4 source patch archive is missing.' }
 $patchPath = Join-Path $env:RUNNER_TEMP 'ra-companion-v0.5.4.patch'
 $compressed = [Convert]::FromBase64String((Get-Content $patchArchive -Raw).Trim())
-$inputStream = [IO.MemoryStream]::new($compressed)
-$gzip = [IO.Compression.GZipStream]::new($inputStream, [IO.Compression.CompressionMode]::Decompress)
+
+# The v0.5.4 patch is a standard gzip stream with no optional header fields.
+# Some Windows runner images reject this stream through GZipStream, so validate
+# the wrapper and feed the raw DEFLATE payload to DeflateStream directly.
+if ($compressed.Length -lt 19 -or $compressed[0] -ne 0x1F -or $compressed[1] -ne 0x8B -or $compressed[2] -ne 0x08) {
+  throw 'v0.5.4 patch archive has an invalid gzip header.'
+}
+if ($compressed[3] -ne 0) { throw 'v0.5.4 patch archive unexpectedly contains optional gzip header fields.' }
+$inputStream = [IO.MemoryStream]::new($compressed, 10, $compressed.Length - 18)
+$deflate = [IO.Compression.DeflateStream]::new($inputStream, [IO.Compression.CompressionMode]::Decompress)
 $outputStream = [IO.MemoryStream]::new()
 try {
-  $gzip.CopyTo($outputStream)
+  $deflate.CopyTo($outputStream)
   [IO.File]::WriteAllBytes($patchPath, $outputStream.ToArray())
 } finally {
-  $gzip.Dispose()
+  $deflate.Dispose()
   $inputStream.Dispose()
   $outputStream.Dispose()
 }
