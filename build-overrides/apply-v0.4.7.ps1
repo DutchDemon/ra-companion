@@ -22,8 +22,8 @@ $lockPath = 'app/package-lock.json'
 $electronMain = Get-Content $electronMainPath -Raw
 
 $electronMain = Replace-Exact $electronMain `
-  "function createMainWindow() {`n  mainWindow = new BrowserWindow({" `
-  "function createMainWindow() {`n  const windowTitle = ``RA Companion v`${app.getVersion()}``;`n  mainWindow = new BrowserWindow({" `
+  'function createMainWindow() {' `
+  "function createMainWindow() {`r`n  const windowTitle = ``RA Companion v`${app.getVersion()}``;" `
   'dynamic main window title value'
 
 $electronMain = Replace-Exact $electronMain `
@@ -31,24 +31,20 @@ $electronMain = Replace-Exact $electronMain `
   '    title: windowTitle,' `
   'dynamic BrowserWindow title'
 
-$loadBlock = @'
-  const devUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devUrl) mainWindow.loadURL(devUrl);
-  else mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
-'@
-
-$titleGuardBlock = @'
+$titleHook = @'
   mainWindow.on('page-title-updated', (event) => {
     event.preventDefault();
     if (!mainWindow.isDestroyed()) mainWindow.setTitle(windowTitle);
   });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devUrl) mainWindow.loadURL(devUrl);
-  else mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
 '@
 
-$electronMain = Replace-Exact $electronMain $loadBlock $titleGuardBlock 'page title guard'
+$electronMain = Replace-Exact $electronMain `
+  '  const devUrl = process.env.VITE_DEV_SERVER_URL;' `
+  $titleHook.TrimEnd("`r", "`n") `
+  'page title guard'
+
 Set-Content -Path $electronMainPath -Value $electronMain -Encoding utf8 -NoNewline
 
 $rendererMain = Get-Content $rendererMainPath -Raw
