@@ -3,26 +3,13 @@ $ErrorActionPreference = 'Stop'
 $patchArchive = 'build-overrides/v0.5.4.patch.gz.b64'
 if (-not (Test-Path $patchArchive)) { throw 'v0.5.4 source patch archive is missing.' }
 $patchPath = Join-Path $env:RUNNER_TEMP 'ra-companion-v0.5.4.patch'
-$compressed = [Convert]::FromBase64String((Get-Content $patchArchive -Raw).Trim())
 
-# The v0.5.4 patch is a standard gzip stream with no optional header fields.
-# Some Windows runner images reject this stream through GZipStream, so validate
-# the wrapper and feed the raw DEFLATE payload to DeflateStream directly.
-if ($compressed.Length -lt 19 -or $compressed[0] -ne 0x1F -or $compressed[1] -ne 0x8B -or $compressed[2] -ne 0x08) {
-  throw 'v0.5.4 patch archive has an invalid gzip header.'
-}
-if ($compressed[3] -ne 0) { throw 'v0.5.4 patch archive unexpectedly contains optional gzip header fields.' }
-$inputStream = [IO.MemoryStream]::new($compressed, 10, $compressed.Length - 18)
-$deflate = [IO.Compression.DeflateStream]::new($inputStream, [IO.Compression.CompressionMode]::Decompress)
-$outputStream = [IO.MemoryStream]::new()
-try {
-  $deflate.CopyTo($outputStream)
-  [IO.File]::WriteAllBytes($patchPath, $outputStream.ToArray())
-} finally {
-  $deflate.Dispose()
-  $inputStream.Dispose()
-  $outputStream.Dispose()
-}
+# Decode through Python so the gzip payload is reproduced byte-for-byte on all
+# Windows runner images. The patch is validated by git before it is applied.
+$python = Get-Command python -ErrorAction SilentlyContinue
+if (-not $python) { throw 'Python is required to decode the v0.5.4 patch archive.' }
+& python -c "import base64,gzip,pathlib,sys; pathlib.Path(sys.argv[2]).write_bytes(gzip.decompress(base64.b64decode(pathlib.Path(sys.argv[1]).read_text().strip())))" $patchArchive $patchPath
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $patchPath)) { throw 'v0.5.4 patch decompression failed.' }
 
 if (-not (Test-Path 'app/src/main.tsx')) { throw 'v0.5.3 working source is missing.' }
 if (-not (Test-Path 'app/src/AppPages.tsx')) { throw 'v0.5.3 stable page module is missing.' }
