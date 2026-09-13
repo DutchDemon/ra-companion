@@ -38,6 +38,20 @@ jobs:
           cache: npm
           cache-dependency-path: app/package.json
 
+      - name: Configure assisted elevated installer
+        working-directory: app
+        shell: pwsh
+        run: |
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));Object.assign(p.build.nsis,{allowElevation:true,selectPerMachineByDefault:true,packElevateHelper:true});fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+          $script = Get-Content 'build/installer.nsh' -Raw
+          $pattern = '(?s); Always use a per-user installation\..*?!macro customInstallMode\r?\n\s*StrCpy \$isForceCurrentInstall "1"\r?\n!macroend\r?\n\r?\n'
+          $replacement = "; Use electron-builder's assisted install-mode page.`r`n; Per-machine installs request elevation automatically.`r`n`r`n"
+          $patched = [regex]::Replace($script, $pattern, $replacement, 1)
+          if ($patched -eq $script) { throw 'Could not remove the forced per-user install macro.' }
+          Set-Content 'build/installer.nsh' $patched
+          Select-String -Path 'package.json' -Pattern 'allowElevation|selectPerMachineByDefault|packElevateHelper'
+          if (Select-String -Path 'build/installer.nsh' -Pattern 'isForceCurrentInstall') { throw 'Forced per-user mode is still present.' }
+
       - name: Install dependencies
         working-directory: app
         run: npm install --no-audit --no-fund
