@@ -76,36 +76,30 @@ jobs:
 
       - name: Microsoft Defender scan
         shell: pwsh
-        continue-on-error: true
         run: |
           $report = 'app/release/defender-scan.txt'
           "Target: $env:INSTALLER_PATH" | Set-Content $report
-          try {
-            $status = Get-MpComputerStatus -ErrorAction Stop
-            "AntivirusEnabled: $($status.AntivirusEnabled)" | Add-Content $report
-            "RealTimeProtectionEnabled: $($status.RealTimeProtectionEnabled)" | Add-Content $report
-            "AntivirusSignatureVersion: $($status.AntivirusSignatureVersion)" | Add-Content $report
-            if ($status.AntivirusEnabled) {
-              Start-MpScan -ScanType CustomScan -ScanPath $env:INSTALLER_PATH -ErrorAction Stop
-              Start-Sleep -Seconds 2
-              $hits = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
-                ($_.Resources -join ';') -like "*$($env:INSTALLER_NAME)*"
-              })
-              if ($hits.Count -gt 0) {
-                "RESULT: DETECTION" | Add-Content $report
-                $hits | Format-List * | Out-String | Add-Content $report
-                throw 'Microsoft Defender detected the installer.'
-              }
-              "RESULT: NO DETECTION" | Add-Content $report
-            } else {
-              "RESULT: DEFENDER NOT ENABLED ON RUNNER" | Add-Content $report
+          $status = Get-MpComputerStatus -ErrorAction Stop
+          "AntivirusEnabled: $($status.AntivirusEnabled)" | Add-Content $report
+          "RealTimeProtectionEnabled: $($status.RealTimeProtectionEnabled)" | Add-Content $report
+          "AntivirusSignatureVersion: $($status.AntivirusSignatureVersion)" | Add-Content $report
+          if ($status.AntivirusEnabled) {
+            Start-MpScan -ScanType CustomScan -ScanPath $env:INSTALLER_PATH -ErrorAction Stop
+            Start-Sleep -Seconds 2
+            $hits = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
+              ($_.Resources -join ';') -like "*$($env:INSTALLER_NAME)*"
+            })
+            if ($hits.Count -gt 0) {
+              "RESULT: DETECTION" | Add-Content $report
+              $hits | Format-List * | Out-String | Add-Content $report
+              Get-Content $report
+              throw 'Microsoft Defender detected the installer.'
             }
-          } catch {
-            "ERROR: $($_.Exception.Message)" | Add-Content $report
-            throw
-          } finally {
-            Get-Content $report
+            "RESULT: NO DETECTION" | Add-Content $report
+          } else {
+            "RESULT: DEFENDER NOT ENABLED ON RUNNER" | Add-Content $report
           }
+          Get-Content $report
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
@@ -130,10 +124,15 @@ jobs:
           path: artifact
 
       - name: Install and update ClamAV
+        shell: bash
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq clamav
-          sudo freshclam || true
+          sudo apt-get install -y -qq clamav clamav-freshclam
+          sudo systemctl stop clamav-freshclam.service || true
+          sudo pkill -x freshclam || true
+          sudo freshclam
+          clamscan --version
+          test -n "$(find /var/lib/clamav -maxdepth 1 -type f \( -name '*.cvd' -o -name '*.cld' \) -print -quit)"
 
       - name: ClamAV scan
         shell: bash
@@ -145,7 +144,9 @@ jobs:
           test ${PIPESTATUS[0]} -eq 0
 
       - name: Upload antivirus report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ra-companion-v0.4.3-antivirus
           path: artifact/clamav-scan.txt
+          if-no-files-found: warn
