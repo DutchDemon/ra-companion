@@ -40,7 +40,18 @@ Replace-Exactly $preloadPath "  getSnapshot: () => ipcRenderer.invoke('snapshot:
 Replace-Exactly $typesPath '      getSnapshot: () => Promise<Snapshot>;' '      getSnapshot: (forceRa?: boolean) => Promise<Snapshot>;'
 Replace-Exactly $uiPath '  async function refresh() {' '  async function refresh(forceRa = false) {'
 Replace-Exactly $uiPath '      setSnapshot(await window.raCompanion.getSnapshot());' '      setSnapshot(await window.raCompanion.getSnapshot(forceRa));'
-Replace-Exactly $uiPath "    setTimeout(() => setSaved(''), 1600);`n    refresh();`n  }" "    setTimeout(() => setSaved(''), 1600);`n    refresh(true);`n  }"
+
+$ui = Get-Content $uiPath -Raw
+$saveRefreshPattern = "setTimeout\(\(\) => setSaved\(''\), 1600\);\s*refresh\(\);"
+$saveRefreshMatches = [regex]::Matches($ui, $saveRefreshPattern)
+if ($saveRefreshMatches.Count -ne 1) { throw "Expected one settings refresh call, found $($saveRefreshMatches.Count)." }
+$ui = [regex]::Replace(
+  $ui,
+  $saveRefreshPattern,
+  "setTimeout(() => setSaved(''), 1600);`n    refresh(true);",
+  1
+)
+[IO.File]::WriteAllText((Resolve-Path $uiPath), $ui, [Text.UTF8Encoding]::new($false))
 
 # Regression coverage for account isolation, progress resets and forced refreshes.
 $testPath = 'app/src/__tests__/v059.ra-authoritative-progress.test.ts'
