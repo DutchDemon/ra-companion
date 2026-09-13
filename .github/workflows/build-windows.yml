@@ -2,12 +2,154 @@ name: Build Windows Installer
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'build-source/**'
+      - '.github/workflows/build-windows.yml'
 
 permissions:
   contents: read
 
 jobs:
-  waiting:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
     steps:
-      - run: echo "Source update in progress; use workflow_dispatch only."
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct source archive
+        shell: pwsh
+        run: |
+          $parts = Get-ChildItem 'build-source/part*.b64' | Sort-Object Name
+          if ($parts.Count -lt 1) { throw 'No source chunks found.' }
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          $zip = Join-Path $env:RUNNER_TEMP 'ra-companion-source.zip'
+          [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String($b64))
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expected = '890c9a743a93c7679ece46d858a22f7c59e96d93873135a0340ae1fbe78ef99a'
+          if ($actual -ne $expected) { throw "Source SHA256 mismatch: $actual" }
+          Expand-Archive $zip -DestinationPath app -Force
+          $pkg = Get-Content 'app/package.json' -Raw | ConvertFrom-Json
+          if ($pkg.version -ne '0.4.4') { throw "Expected app version 0.4.4, got $($pkg.version)" }
+          "SOURCE_SHA256=$actual" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Sanity checks
+        working-directory: app
+        shell: pwsh
+        run: |
+          node --check electron/main.cjs
+          node --check electron/preload.cjs
+          if (Select-String -Path 'build/installer.nsh' -Pattern 'isForceCurrentInstall') { throw 'Forced per-user installer mode is not allowed.' }
+          npm run build
+
+      - name: Build NSIS installer
+        working-directory: app
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --win nsis --x64 --publish never
+
+      - name: Locate installer and generate hashes
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.4.4.exe' } | Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer was not generated.' }
+          "INSTALLER_PATH=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "INSTALLER_NAME=$($installer.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $sha256 = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sha512 = (Get-FileHash $installer.FullName -Algorithm SHA512).Hash.ToLowerInvariant()
+          @(
+            "File: $($installer.Name)",
+            "Source SHA256: $env:SOURCE_SHA256",
+            "Installer SHA256: $sha256",
+            "Installer SHA512: $sha512"
+          ) | Set-Content 'app/release/checksums.txt'
+          Get-Content 'app/release/checksums.txt'
+
+      - name: Microsoft Defender scan
+        shell: pwsh
+        run: |
+          $report = 'app/release/defender-scan.txt'
+          "Target: $env:INSTALLER_PATH" | Set-Content $report
+          $status = Get-MpComputerStatus -ErrorAction Stop
+          "AntivirusEnabled: $($status.AntivirusEnabled)" | Add-Content $report
+          "RealTimeProtectionEnabled: $($status.RealTimeProtectionEnabled)" | Add-Content $report
+          "AntivirusSignatureVersion: $($status.AntivirusSignatureVersion)" | Add-Content $report
+          if ($status.AntivirusEnabled) {
+            Start-MpScan -ScanType CustomScan -ScanPath $env:INSTALLER_PATH -ErrorAction Stop
+            Start-Sleep -Seconds 2
+            $hits = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
+              ($_.Resources -join ';') -like "*$($env:INSTALLER_NAME)*"
+            })
+            if ($hits.Count -gt 0) {
+              "RESULT: DETECTION" | Add-Content $report
+              $hits | Format-List * | Out-String | Add-Content $report
+              Get-Content $report
+              throw 'Microsoft Defender detected the installer.'
+            }
+            "RESULT: NO DETECTION" | Add-Content $report
+          } else {
+            "RESULT: DEFENDER NOT ENABLED ON RUNNER" | Add-Content $report
+          }
+          Get-Content $report
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ra-companion-v0.4.4-windows
+          if-no-files-found: error
+          path: |
+            app/release/RA Companion Setup 0.4.4.exe
+            app/release/*.blockmap
+            app/release/latest.yml
+            app/release/checksums.txt
+            app/release/defender-scan.txt
+
+  clamav:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ra-companion-v0.4.4-windows
+          path: artifact
+
+      - name: Install and update ClamAV
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clamav clamav-freshclam
+          sudo systemctl stop clamav-freshclam.service || true
+          sudo pkill -x freshclam || true
+          sudo freshclam
+          clamscan --version
+          test -n "$(find /var/lib/clamav -maxdepth 1 -type f \( -name '*.cvd' -o -name '*.cld' \) -print -quit)"
+
+      - name: ClamAV scan
+        shell: bash
+        run: |
+          set -o pipefail
+          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.4.4.exe' -print -quit)
+          test -n "$INSTALLER"
+          clamscan "$INSTALLER" | tee artifact/clamav-scan.txt
+          test ${PIPESTATUS[0]} -eq 0
+
+      - name: Upload antivirus report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ra-companion-v0.4.4-antivirus
+          path: artifact/clamav-scan.txt
+          if-no-files-found: warn
