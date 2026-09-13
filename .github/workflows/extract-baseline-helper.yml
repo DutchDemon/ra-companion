@@ -1,4 +1,4 @@
-name: Extract baseline RAM helper
+name: Extract current working source
 
 on:
   push:
@@ -11,20 +11,35 @@ permissions:
 
 jobs:
   extract:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Reconstruct baseline
-        shell: bash
+      - name: Reconstruct and patch current source
+        shell: pwsh
         run: |
-          cat build-source/part*.b64 | base64 -d > "$RUNNER_TEMP/source.zip"
-          sha256sum "$RUNNER_TEMP/source.zip"
-          mkdir app
-          unzip -q "$RUNNER_TEMP/source.zip" -d app
-          find app -maxdepth 3 -type f -name 'ram-reader.ps1' -print
-      - name: Upload helper
+          $parts = Get-ChildItem 'build-source/part*.b64' | Sort-Object Name
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          $zip = Join-Path $env:RUNNER_TEMP 'source.zip'
+          [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String($b64))
+          Expand-Archive $zip -DestinationPath app -Force
+          Copy-Item 'build-overrides/src/*' 'app/src/' -Recurse -Force
+          Copy-Item 'build-overrides/electron/*' 'app/electron/' -Recurse -Force
+          & 'build-overrides/apply-v0.4.5.ps1'
+          & 'build-overrides/apply-v0.4.6.ps1'
+          & 'build-overrides/apply-v0.4.7.ps1'
+          & 'build-overrides/apply-v0.4.8b.ps1'
+          & 'build-overrides/apply-v0.5.0.ps1'
+          New-Item -ItemType Directory -Path extracted -Force | Out-Null
+          Copy-Item 'app/tools/ram-reader.ps1' 'extracted/ram-reader.ps1'
+          Copy-Item 'app/electron/main.cjs' 'extracted/electron-main.cjs'
+          Copy-Item 'app/src/main.tsx' 'extracted/main.tsx'
+          Copy-Item 'app/src/global.d.ts' 'extracted/global.d.ts'
+          Copy-Item 'app/src/profiles/twilightPrincess.ts' 'extracted/twilightPrincess.ts'
+          Copy-Item 'app/src/profiles/twilightPrincessGuide.ts' 'extracted/twilightPrincessGuide.ts'
+          Copy-Item 'app/package.json' 'extracted/package.json'
+      - name: Upload current source
         uses: actions/upload-artifact@v4
         with:
-          name: baseline-ram-helper
-          path: app/tools/ram-reader.ps1
+          name: current-working-source
+          path: extracted/*
           if-no-files-found: error
