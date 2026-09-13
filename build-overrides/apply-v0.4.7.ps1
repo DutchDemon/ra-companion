@@ -31,19 +31,27 @@ $electronMain = Replace-Exact $electronMain `
   '    title: windowTitle,' `
   'dynamic BrowserWindow title'
 
-$titleHook = @'
+$mainLoadBlock = @'
+  const devUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devUrl) mainWindow.loadURL(devUrl);
+  else mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+'@
+
+$titleGuardBlock = @'
   mainWindow.on('page-title-updated', (event) => {
     event.preventDefault();
     if (!mainWindow.isDestroyed()) mainWindow.setTitle(windowTitle);
   });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devUrl) mainWindow.loadURL(devUrl);
+  else mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
 '@
 
 $electronMain = Replace-Exact $electronMain `
-  '  const devUrl = process.env.VITE_DEV_SERVER_URL;' `
-  $titleHook.TrimEnd("`r", "`n") `
-  'page title guard'
+  $mainLoadBlock.TrimEnd("`r", "`n") `
+  $titleGuardBlock.TrimEnd("`r", "`n") `
+  'main-window-only page title guard'
 
 Set-Content -Path $electronMainPath -Value $electronMain -Encoding utf8 -NoNewline
 
@@ -75,6 +83,10 @@ if (-not $patchedElectron.Contains('const windowTitle = `RA Companion v${app.get
 }
 if (-not $patchedElectron.Contains("mainWindow.on('page-title-updated'")) {
   throw 'Window title page-title guard was not applied.'
+}
+$titleHandlerCount = ([regex]::Matches($patchedElectron, [regex]::Escape("mainWindow.on('page-title-updated'"))).Count
+if ($titleHandlerCount -ne 1) {
+  throw "Expected exactly one main-window title handler, found $titleHandlerCount."
 }
 if (-not $patchedElectron.Contains('quitAndInstall(true, true)')) {
   throw 'Silent updater install call regressed.'
