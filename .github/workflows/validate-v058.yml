@@ -1,0 +1,72 @@
+name: Validate v0.5.8 Faron Tear Subareas
+
+on:
+  push:
+    branches:
+      - fix/faron-tears-subareas
+    paths:
+      - '.github/workflows/validate-v058.yml'
+      - 'build-overrides/**'
+      - 'build-source/**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct verified source baseline
+        shell: pwsh
+        run: |
+          $parts = Get-ChildItem 'build-source/part*.b64' | Sort-Object Name
+          if ($parts.Count -lt 1) { throw 'No source chunks found.' }
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          $zip = Join-Path $env:RUNNER_TEMP 'ra-companion-source.zip'
+          [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String($b64))
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expected = '890c9a743a93c7679ece46d858a22f7c59e96d93873135a0340ae1fbe78ef99a'
+          if ($actual -ne $expected) { throw "Source SHA256 mismatch: $actual" }
+          Expand-Archive $zip -DestinationPath app -Force
+
+      - name: Apply source chain through v0.5.8
+        shell: pwsh
+        run: |
+          Copy-Item 'build-overrides/src/*' 'app/src/' -Recurse -Force
+          Copy-Item 'build-overrides/electron/*' 'app/electron/' -Recurse -Force
+          & 'build-overrides/apply-v0.4.5.ps1'
+          & 'build-overrides/apply-v0.4.6.ps1'
+          & 'build-overrides/apply-v0.4.7.ps1'
+          & 'build-overrides/apply-v0.4.8b.ps1'
+          & 'build-overrides/apply-v0.5.0.ps1'
+          & 'build-overrides/apply-v0.5.1.ps1'
+          & 'build-overrides/apply-v0.5.2.ps1'
+          & 'build-overrides/apply-v0.5.3.ps1'
+          & 'build-overrides/apply-v0.5.4.ps1'
+          & 'build-overrides/apply-v0.5.5.ps1'
+          & 'build-overrides/apply-v0.5.6.ps1'
+          & 'build-overrides/apply-v0.5.7.ps1'
+          & 'build-overrides/apply-v0.5.8.ps1'
+          $pkg = Get-Content 'app/package.json' -Raw | ConvertFrom-Json
+          if ($pkg.version -ne '0.5.8') { throw "Expected app version 0.5.8, got $($pkg.version)" }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Run regressions
+        working-directory: app
+        run: npm run test:regressions
+
+      - name: Build renderer
+        working-directory: app
+        run: npm run build
