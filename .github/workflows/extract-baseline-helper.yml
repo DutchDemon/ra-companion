@@ -1,0 +1,30 @@
+name: Extract baseline RAM helper
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/extract-baseline-helper.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct baseline
+        shell: bash
+        run: |
+          cat build-source/part*.b64 | base64 -d > "$RUNNER_TEMP/source.zip"
+          sha256sum "$RUNNER_TEMP/source.zip"
+          mkdir app
+          unzip -q "$RUNNER_TEMP/source.zip" -d app
+          find app -maxdepth 3 -type f -name 'ram-reader.ps1' -print
+      - name: Upload helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-ram-helper
+          path: app/tools/ram-reader.ps1
+          if-no-files-found: error
