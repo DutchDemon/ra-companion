@@ -39,19 +39,12 @@ jobs:
       - name: Collect source
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path export/src/profiles -Force | Out-Null
-          New-Item -ItemType Directory -Path export/tools -Force | Out-Null
-          New-Item -ItemType Directory -Path export/electron -Force | Out-Null
-          Copy-Item app/src/main.tsx export/src/main.tsx
-          Copy-Item app/src/global.d.ts export/src/global.d.ts
-          Copy-Item app/src/profiles/twilightPrincess.ts export/src/profiles/twilightPrincess.ts
-          Copy-Item app/src/profiles/twilightPrincessState.ts export/src/profiles/twilightPrincessState.ts
-          Copy-Item app/src/profiles/twilightPrincessGuide.ts export/src/profiles/twilightPrincessGuide.ts
-          Copy-Item app/tools/ram-reader.ps1 export/tools/ram-reader.ps1
-          Copy-Item app/package.json export/package.json
-          Copy-Item app/package-lock.json export/package-lock.json
-          Copy-Item app/electron/main.cjs export/electron/main.cjs
-          Copy-Item app/electron/preload.cjs export/electron/preload.cjs
+          New-Item -ItemType Directory -Path export -Force | Out-Null
+          Copy-Item app/src export/src -Recurse -Force
+          Copy-Item app/tools export/tools -Recurse -Force
+          Copy-Item app/electron export/electron -Recurse -Force
+          Copy-Item app/package.json export/package.json -Force
+          if (Test-Path app/package-lock.json) { Copy-Item app/package-lock.json export/package-lock.json -Force }
 
       - uses: actions/upload-artifact@v4
         with:
