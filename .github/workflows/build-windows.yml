@@ -43,7 +43,7 @@ jobs:
           & 'build-overrides/apply-v0.4.5.ps1'
           & 'build-overrides/apply-v0.4.6.ps1'
           & 'build-overrides/apply-v0.4.7.ps1'
-          & 'build-overrides/apply-v0.4.8.ps1'
+          & 'build-overrides/apply-v0.4.8b.ps1'
           if (-not (Test-Path 'app/src/profiles/twilightPrincessGuide.ts')) { throw 'Twilight Princess guide module was not applied.' }
           $pkg = Get-Content 'app/package.json' -Raw | ConvertFrom-Json
           if ($pkg.version -ne '0.4.8') { throw "Expected app version 0.4.8, got $($pkg.version)" }
