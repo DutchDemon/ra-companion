@@ -172,7 +172,7 @@ jobs:
           name: ra-companion-v0.4.4-antivirus
           path: antivirus
 
-      - name: Verify updater payload
+      - name: Prepare and verify updater payload
         shell: bash
         run: |
           test -f 'release/RA Companion Setup 0.4.4.exe'
@@ -181,6 +181,14 @@ jobs:
           test -f 'release/checksums.txt'
           test -f 'release/defender-scan.txt'
           test -f 'antivirus/clamav-scan.txt'
+
+          cp 'release/RA Companion Setup 0.4.4.exe' 'release/RA-Companion-Setup-0.4.4.exe'
+          cp 'release/RA Companion Setup 0.4.4.exe.blockmap' 'release/RA-Companion-Setup-0.4.4.exe.blockmap'
+
+          EXPECTED_PATH=$(awk '/^path:/ {print $2; exit}' release/latest.yml)
+          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.4.4.exe'
+          test -f "release/$EXPECTED_PATH"
+          test -f "release/$EXPECTED_PATH.blockmap"
 
       - name: Publish GitHub Release v0.4.4
         shell: bash
@@ -201,10 +209,13 @@ jobs:
 
           TAG='v0.4.4'
           REPO='${{ github.repository }}'
+
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release delete-asset "$TAG" 'RA.Companion.Setup.0.4.4.exe' --repo "$REPO" -y || true
+            gh release delete-asset "$TAG" 'RA.Companion.Setup.0.4.4.exe.blockmap' --repo "$REPO" -y || true
             gh release upload "$TAG" \
-              'release/RA Companion Setup 0.4.4.exe' \
-              'release/RA Companion Setup 0.4.4.exe.blockmap' \
+              'release/RA-Companion-Setup-0.4.4.exe' \
+              'release/RA-Companion-Setup-0.4.4.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
@@ -213,8 +224,8 @@ jobs:
             gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.4.4' --notes-file release-notes.md --latest
           else
             gh release create "$TAG" \
-              'release/RA Companion Setup 0.4.4.exe' \
-              'release/RA Companion Setup 0.4.4.exe.blockmap' \
+              'release/RA-Companion-Setup-0.4.4.exe' \
+              'release/RA-Companion-Setup-0.4.4.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
