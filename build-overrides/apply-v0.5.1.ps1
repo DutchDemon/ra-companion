@@ -21,15 +21,12 @@ $lockPath = 'app/package-lock.json'
 if (-not (Test-Path 'app/src/main.tsx')) { throw 'Patched app source is missing.' }
 if (-not (Test-Path 'app/tools/ram-reader.ps1')) { throw 'RAM reader source is missing.' }
 
-Push-Location 'app'
-try {
-  & git apply --check --ignore-space-change --ignore-whitespace $patchPath
-  if ($LASTEXITCODE -ne 0) { throw 'v0.5.1 patch preflight failed.' }
-  & git apply --ignore-space-change --ignore-whitespace $patchPath
-  if ($LASTEXITCODE -ne 0) { throw 'v0.5.1 patch application failed.' }
-} finally {
-  Pop-Location
-}
+# The reconstructed app is a directory inside the checkout, not its own Git repo.
+# Apply the source diff explicitly underneath app/ so new files land there too.
+& git apply --check --ignore-space-change --ignore-whitespace --directory=app $patchPath
+if ($LASTEXITCODE -ne 0) { throw 'v0.5.1 patch preflight failed.' }
+& git apply --ignore-space-change --ignore-whitespace --directory=app $patchPath
+if ($LASTEXITCODE -ne 0) { throw 'v0.5.1 patch application failed.' }
 
 $package = Get-Content $packagePath -Raw | ConvertFrom-Json
 $package.version = '0.5.1'
