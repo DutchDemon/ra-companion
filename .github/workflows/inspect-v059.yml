@@ -1,0 +1,66 @@
+name: Inspect v0.5.9 Source
+
+on:
+  push:
+    branches: [dev/v0.5.9-inspect]
+    paths:
+      - '.github/workflows/inspect-v059.yml'
+      - 'build-source/**'
+      - 'build-overrides/**'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct current v0.5.8 source
+        shell: pwsh
+        run: |
+          $parts = Get-ChildItem 'build-source/part*.b64' | Sort-Object Name
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          $zip = Join-Path $env:RUNNER_TEMP 'ra-companion-source.zip'
+          [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String($b64))
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne '890c9a743a93c7679ece46d858a22f7c59e96d93873135a0340ae1fbe78ef99a') { throw "Source SHA mismatch: $actual" }
+          Expand-Archive $zip -DestinationPath app -Force
+          Copy-Item 'build-overrides/src/*' 'app/src/' -Recurse -Force
+          Copy-Item 'build-overrides/electron/*' 'app/electron/' -Recurse -Force
+          & 'build-overrides/apply-v0.4.5.ps1'
+          & 'build-overrides/apply-v0.4.6.ps1'
+          & 'build-overrides/apply-v0.4.7.ps1'
+          & 'build-overrides/apply-v0.4.8b.ps1'
+          & 'build-overrides/apply-v0.5.0.ps1'
+          & 'build-overrides/apply-v0.5.1.ps1'
+          & 'build-overrides/apply-v0.5.2.ps1'
+          & 'build-overrides/apply-v0.5.3.ps1'
+          & 'build-overrides/apply-v0.5.4.ps1'
+          & 'build-overrides/apply-v0.5.5.ps1'
+          & 'build-overrides/apply-v0.5.6.ps1'
+          & 'build-overrides/apply-v0.5.7.ps1'
+          & 'build-overrides/apply-v0.5.8.ps1'
+
+      - name: Print relevant final source
+        shell: pwsh
+        run: |
+          Write-Host '===== APPPAGES START ====='
+          Get-Content 'app/src/AppPages.tsx'
+          Write-Host '===== APPPAGES END ====='
+          Write-Host '===== PROFILE START ====='
+          Get-Content 'app/src/profiles/twilightPrincess.ts'
+          Write-Host '===== PROFILE END ====='
+          Write-Host '===== STATE ENGINE START ====='
+          Get-Content 'app/src/profiles/twilightPrincessState.ts'
+          Write-Host '===== STATE ENGINE END ====='
+          Write-Host '===== RAM READER START ====='
+          Get-Content 'app/tools/ram-reader.ps1'
+          Write-Host '===== RAM READER END ====='
+          Write-Host '===== TYPES START ====='
+          Get-Content 'app/src/global.d.ts'
+          Write-Host '===== TYPES END ====='
+          Write-Host '===== STYLES MATCHES ====='
+          Select-String -Path 'app/src/styles.css' -Pattern 'v5-game-hero|v5-live-context|presence-strip|v5-session-chips' -Context 3,8
