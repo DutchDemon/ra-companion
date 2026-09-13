@@ -4,11 +4,16 @@ $profilePath = 'app/src/profiles/twilightPrincess.ts'
 if (-not (Test-Path $profilePath)) { throw 'v0.5.7 Twilight Princess context engine is missing.' }
 
 $profile = Get-Content $profilePath -Raw
-$oldGate = "(stageCode || '').trim() === 'F_SP108'"
-$newGate = "['F_SP108', 'R_SP108', 'D_SB10'].includes((stageCode || '').trim())"
-$matches = ([regex]::Matches($profile, [regex]::Escape($oldGate))).Count
-if ($matches -ne 1) { throw "Expected exactly one v0.5.7 Faron Tear stage gate, found $matches." }
-$profile = $profile.Replace($oldGate, $newGate)
+$gatePattern = "\((?<stage>(?:[A-Za-z_$][A-Za-z0-9_$]*\.)?stageCode)\s*\|\|\s*''\)\.trim\(\)\s*===\s*'F_SP108'"
+$gateMatches = [regex]::Matches($profile, $gatePattern)
+if ($gateMatches.Count -ne 1) {
+  Write-Host 'F_SP108 source context:'
+  ($profile -split "`r?`n" | Where-Object { $_ -like '*F_SP108*' }) | ForEach-Object { Write-Host $_ }
+  throw "Expected exactly one v0.5.7 Faron Tear stage gate, found $($gateMatches.Count)."
+}
+$stageExpression = $gateMatches[0].Groups['stage'].Value
+$newGate = "['F_SP108', 'R_SP108', 'D_SB10'].includes(($stageExpression || '').trim())"
+$profile = [regex]::Replace($profile, $gatePattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $newGate }, 1)
 [IO.File]::WriteAllText((Resolve-Path $profilePath), $profile, [Text.UTF8Encoding]::new($false))
 
 $testPath = 'app/src/__tests__/v058.regression.test.ts'
@@ -21,15 +26,15 @@ describe('v0.5.8 Faron Tear Hunt subarea coverage', () => {
   const source = readFileSync(resolve(process.cwd(), 'src/profiles/twilightPrincess.ts'), 'utf8');
 
   it('keeps the Tear objective active in Faron Woods, Faron Woods House and the Faron Woods Tunnel', () => {
-    expect(source).toContain("['F_SP108', 'R_SP108', 'D_SB10'].includes((stageCode || '').trim())");
+    expect(source).toMatch(/\['F_SP108', 'R_SP108', 'D_SB10'\]\.includes\(\((?:[A-Za-z_$][A-Za-z0-9_$]*\.)?stageCode \|\| ''\)\.trim\(\)\)/);
   });
 
   it('removes the single-stage-only v0.5.7 gate', () => {
-    expect(source).not.toContain("(stageCode || '').trim() === 'F_SP108'");
+    expect(source).not.toMatch(/stageCode \|\| ''\)\.trim\(\) === 'F_SP108'/);
   });
 
   it('does not broaden the Tear Hunt gate to Forest Temple', () => {
-    const gate = source.match(/\['F_SP108', 'R_SP108', 'D_SB10'\]\.includes\(\(stageCode \|\| ''\)\.trim\(\)\)/)?.[0] || '';
+    const gate = source.match(/\['F_SP108', 'R_SP108', 'D_SB10'\]\.includes\([^\n]+\)/)?.[0] || '';
     expect(gate).not.toContain('D_MN05');
   });
 });
@@ -57,7 +62,7 @@ $finalProfile = Get-Content $profilePath -Raw
 $finalPkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
 if ($finalPkg.version -ne '0.5.8') { throw "Expected app version 0.5.8, got $($finalPkg.version)" }
 if (-not (Test-Path $testPath)) { throw 'v0.5.8 regression tests are missing.' }
-if (-not $finalProfile.Contains("['F_SP108', 'R_SP108', 'D_SB10'].includes((stageCode || '').trim())")) { throw 'Faron Tear Hunt subarea gate is missing.' }
-if ($finalProfile.Contains("(stageCode || '').trim() === 'F_SP108'")) { throw 'Single-stage Faron Tear gate is still present.' }
+if (-not $finalProfile.Contains("['F_SP108', 'R_SP108', 'D_SB10'].includes(")) { throw 'Faron Tear Hunt subarea gate is missing.' }
+if ($finalProfile -match "stageCode \|\| ''\)\.trim\(\) === 'F_SP108'") { throw 'Single-stage Faron Tear gate is still present.' }
 
 Write-Host 'Applied RA Companion v0.5.8 Faron Tear Hunt subarea coverage fix.'
