@@ -70,7 +70,8 @@ jobs:
           if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'quitAndInstall(true, true)' -Quiet)) { throw 'Silent updater install call is missing.' }
           if (Select-String -Path 'electron/main.cjs' -SimpleMatch 'quitAndInstall(false, true)' -Quiet) { throw 'Interactive updater install call is still present.' }
           if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'const windowTitle = `RA Companion v${app.getVersion()}`;' -Quiet)) { throw 'Dynamic app-version window title is missing.' }
-          $titleHandlerCount = (Select-String -Path 'electron/main.cjs' -SimpleMatch "mainWindow.on('page-title-updated'" -AllMatches).Matches.Count
+          $titleSource = Get-Content 'electron/main.cjs' -Raw
+          $titleHandlerCount = ([regex]::Matches($titleSource, [regex]::Escape("mainWindow.on('page-title-updated'"))).Count
           if ($titleHandlerCount -ne 1) { throw "Expected exactly one window title guard, found $titleHandlerCount." }
           if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch "updater.on('download-progress'" -Quiet)) { throw 'Updater download progress listener is missing.' }
           if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch "webContents.send('update:status-changed'" -Quiet)) { throw 'Updater status IPC broadcaster is missing.' }
