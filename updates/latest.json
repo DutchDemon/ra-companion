@@ -1,8 +1,8 @@
 {
-  "version": "0.5.0",
+  "version": "0.4.2",
   "electronVersion": "38.1.2",
   "appUrl": "https://raw.githubusercontent.com/DutchDemon/ra-companion/main/updates/app_payload.zip",
   "sha256": "c32b72eb81cfdec117094e79f67213a289f781fe890cc79bc0c48f50b6f09a6a",
-  "notes": "Initial remote-updater release.",
+  "notes": "Current stable RA Companion release.",
   "mandatory": false
 }
