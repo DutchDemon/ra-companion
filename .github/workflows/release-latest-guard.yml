@@ -1,0 +1,45 @@
+name: Keep Latest Release Correct
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/release-latest-guard.yml'
+  workflow_run:
+    workflows: ['Build Windows Installer']
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  repair-latest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark highest stable semver as latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          TAGS=$(gh release list \
+            --repo "$REPO" \
+            --limit 100 \
+            --exclude-drafts \
+            --exclude-pre-releases \
+            --json tagName \
+            --jq '.[].tagName' \
+            | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' || true)
+
+          if [ -z "$TAGS" ]; then
+            echo 'No stable semantic-version releases found.'
+            exit 0
+          fi
+
+          HIGHEST=$(printf '%s\n' "$TAGS" | sort -V | tail -n 1)
+          echo "Highest stable release: $HIGHEST"
+
+          gh release edit "$HIGHEST" --repo "$REPO" --latest
+          echo "Marked $HIGHEST as Latest."
