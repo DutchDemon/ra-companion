@@ -6,6 +6,7 @@ on:
     paths:
       - 'build-overrides/v0.5.3.patch.gz.b64'
       - 'build-overrides/apply-v0.5.3.ps1'
+      - '.github/workflows/build-windows.yml'
       - '.github/workflows/v053-validate.yml'
 
 permissions:
@@ -17,6 +18,15 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify v0.5.3 release workflow
+        shell: pwsh
+        run: |
+          $workflow = Get-Content '.github/workflows/build-windows.yml' -Raw
+          if (-not $workflow.Contains("& 'build-overrides/apply-v0.5.3.ps1'")) { throw 'Release workflow does not apply v0.5.3.' }
+          if (-not $workflow.Contains('RA Companion Setup 0.5.3.exe')) { throw 'v0.5.3 installer filename is missing.' }
+          if (-not $workflow.Contains("TAG='v0.5.3'")) { throw 'v0.5.3 release tag is missing.' }
+          if (-not $workflow.Contains('npm run test:regressions')) { throw 'Release build does not run v0.5.3 regression tests.' }
 
       - name: Reconstruct verified source through v0.5.3
         shell: pwsh
