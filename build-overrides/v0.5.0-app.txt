@@ -1,0 +1,496 @@
+function App() {
+  const { snapshot, refresh, error } = useSnapshot(700);
+  const liveRam = useLiveRam();
+  const { state: overlay, setState: setOverlay, update: updateOverlay } = useOverlayState();
+  const [page, setPage] = useState<'dashboard' | 'game' | 'achievements' | 'missables' | 'overlay' | 'updates' | 'settings'>('dashboard');
+  const [username, setUsername] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [apiKeyEncrypted, setApiKeyEncrypted] = useState(false);
+  const [saved, setSaved] = useState('');
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [selectedMissable, setSelectedMissable] = useState<any | null>(null);
+  const [missableFilter, setMissableFilter] = useState<'all' | 'available' | 'completed'>('all');
+
+  useEffect(() => {
+    window.raCompanion.getConfig().then((config) => {
+      setUsername(config.username || '');
+      setHasApiKey(config.hasApiKey);
+      setApiKeyEncrypted(config.apiKeyEncrypted);
+    });
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      window.raCompanion.checkForUpdates(false).then(setUpdateStatus).catch(() => {});
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    return window.raCompanion.onUpdateStatusChanged((status) => {
+      setUpdateStatus(status);
+      if (status.phase === 'error' || status.phase === 'current') setUpdateBusy(false);
+    });
+  }, []);
+
+  const data = snapshot?.progress?.data;
+  const progress = progressNumbers(data);
+  const achievements = useMemo(() => achievementArray(data), [data]);
+  const locked = achievements.filter((a: any) => !earned(a));
+  const unlocked = achievements.filter(earned);
+
+  const liveRamDetectsGame = Boolean(
+    liveRam?.attached &&
+    !liveRam?.stale &&
+    ['GZ2E01', 'GZ2P01', 'GZ2J01'].includes(String(liveRam?.gameCode || '')),
+  );
+  const gameActive = Boolean(snapshot?.game?.active || liveRamDetectsGame);
+  const effectiveRam = liveRamDetectsGame ? liveRam : snapshot?.ram;
+  const ramLive = Boolean(effectiveRam?.attached && !effectiveRam?.stale);
+  const serverPresenceMessage = snapshot?.presence?.ok && snapshot?.presence?.currentGameMatches ? snapshot.presence.message : '';
+  const fastRamPresence = ramPresenceMessage(effectiveRam);
+  const presenceMessage = fastRamPresence || serverPresenceMessage;
+  const ramRoom = typeof effectiveRam?.room === 'number' ? effectiveRam.room : null;
+
+  const companion = useMemo(() => buildTwilightContext(achievements, presenceMessage, {
+    live: ramLive,
+    stageCode: effectiveRam?.stageCode,
+    stageName: effectiveRam?.stageName,
+    room: ramRoom,
+    linkForm: effectiveRam?.linkForm,
+    playerControl: effectiveRam?.playerControl,
+    inCutscene: effectiveRam?.inCutscene,
+    minigameId: effectiveRam?.minigameId,
+    areaEntranceId: effectiveRam?.areaEntranceId,
+    roomBuildingId: effectiveRam?.roomBuildingId,
+    grottoId: effectiveRam?.grottoId,
+    storyFlags: effectiveRam?.storyFlags,
+  }), [
+    achievements,
+    presenceMessage,
+    ramLive,
+    effectiveRam?.stageCode,
+    effectiveRam?.stageName,
+    ramRoom,
+    effectiveRam?.linkForm,
+    effectiveRam?.playerControl,
+    effectiveRam?.inCutscene,
+    effectiveRam?.minigameId,
+    effectiveRam?.areaEntranceId,
+    effectiveRam?.roomBuildingId,
+    effectiveRam?.grottoId,
+    effectiveRam?.storyFlags,
+  ]);
+
+  const liveMissableIds = useMemo(() => new Set(companion.missables.map((a: any) => achievementId(a))), [companion.missables]);
+  const comingIds = useMemo(() => new Set(companion.comingUp.map((a: any) => achievementId(a))), [companion.comingUp]);
+  const currentIds = useMemo(() => new Set(companion.current.map((a: any) => achievementId(a))), [companion.current]);
+  const allMissables = useMemo(() => achievements.filter((a: any) => Boolean(getTwilightMissableGuide(a))), [achievements]);
+
+  function uniqueAchievements(items: any[]) {
+    const seen = new Set<string>();
+    return items.filter((item) => {
+      const id = achievementId(item);
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+  }
+
+  const relevantAchievements = uniqueAchievements([
+    ...companion.missables,
+    ...companion.current,
+    ...companion.comingUp,
+  ]).slice(0, 5);
+
+  function missableState(achievement: any) {
+    const id = achievementId(achievement);
+    if (earned(achievement)) return { label: 'Completed', tone: 'complete' };
+    if (liveMissableIds.has(id)) return { label: 'Available now', tone: 'warning' };
+    if (comingIds.has(id)) return { label: 'Coming soon', tone: 'upcoming' };
+    if (currentIds.has(id)) return { label: 'Current context', tone: 'active' };
+    return { label: gameActive ? 'Tracked' : 'Waiting', tone: 'neutral' };
+  }
+
+  const filteredMissables = allMissables.filter((achievement: any) => {
+    const state = missableState(achievement);
+    if (missableFilter === 'available') return state.tone === 'warning' || state.tone === 'active';
+    if (missableFilter === 'completed') return state.tone === 'complete';
+    return true;
+  });
+
+  function releaseHighlights(value?: string) {
+    const source = String(value || '');
+    const listMatches = [...source.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)].map((match) => match[1]);
+    const rawItems = listMatches.length ? listMatches : source.split(/\r?\n/);
+    const cleaned = rawItems
+      .map((line) => line
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/^[#>*\-\s]+/, '')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&#39;/g, "'")
+        .replace(/&quot;/g, '"')
+        .replace(/`/g, '')
+        .replace(/\s+/g, ' ')
+        .trim())
+      .filter((line) => line && !/^ra companion v/i.test(line) && !/^important:/i.test(line) && !/^the windows installer/i.test(line));
+    return [...new Set(cleaned)].slice(0, 3);
+  }
+
+  const updateHighlights = releaseHighlights(updateStatus?.notes);
+  const updatePhase = updateStatus?.phase || (updateStatus?.available ? 'available' : updateStatus?.ok ? 'current' : 'checking');
+  const updatePercent = Math.max(0, Math.min(100, Number(updateStatus?.progress) || 0));
+  const updateInProgress = updatePhase === 'downloading' || updatePhase === 'downloaded' || updatePhase === 'installing';
+  const updateChip = updatePhase === 'downloading' ? 'DOWNLOADING' : updatePhase === 'downloaded' ? 'READY' : updatePhase === 'installing' ? 'INSTALLING' : updatePhase === 'error' ? 'ERROR' : updateStatus?.available ? 'UPDATE' : updateStatus?.ok ? 'CURRENT' : 'CHECK';
+
+  function gameImageUrl() {
+    const raw = String(data?.ImageIcon || data?.imageIcon || '');
+    if (!raw) return '';
+    if (/^https?:\/\//i.test(raw)) return raw;
+    return `https://media.retroachievements.org${raw.startsWith('/') ? '' : '/'}${raw}`;
+  }
+
+  async function saveSettings(e: React.FormEvent) {
+    e.preventDefault();
+    const result = await window.raCompanion.saveConfig({ username, apiKey });
+    setHasApiKey(result.hasApiKey);
+    setApiKeyEncrypted(result.apiKeyEncrypted);
+    setApiKey('');
+    setSaved('Saved');
+    window.setTimeout(() => setSaved(''), 1600);
+    refresh();
+  }
+
+  async function toggleOverlay() {
+    const visible = await window.raCompanion.toggleOverlay();
+    setOverlay({ ...overlay, visible });
+  }
+
+  async function checkUpdates() {
+    setUpdateBusy(true);
+    try {
+      setUpdateStatus(await window.raCompanion.checkForUpdates(true));
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
+
+  async function installUpdate() {
+    setUpdateBusy(true);
+    try {
+      const result = await window.raCompanion.installUpdate();
+      setUpdateStatus(result);
+      if (!result.installing) setUpdateBusy(false);
+    } catch (e: any) {
+      setUpdateStatus({ ok: false, currentVersion: '0.5.0', available: false, phase: 'error', error: e?.message || 'Update failed.', message: 'Update failed. You can try again.' });
+      setUpdateBusy(false);
+    }
+  }
+
+  function AchievementRow({ achievement, compact = false }: { achievement: any; compact?: boolean }) {
+    const state = missableState(achievement);
+    const counter = achievementCounter(achievement, effectiveRam);
+    return (
+      <div className={`v5-achievement-row ${compact ? 'compact' : ''}`}>
+        {badgeUrl(achievement) ? <img src={badgeUrl(achievement)} alt="" /> : <div className="v5-badge-placeholder" />}
+        <div className="v5-achievement-copy">
+          <b>{achievement.Title || achievement.title}</b>
+          {!compact && <span>{achievement.Description || achievement.description}</span>}
+          <small className={`v5-inline-state ${state.tone}`}>{state.label}{counter ? ` · ${counter.current}/${counter.target}` : ''}</small>
+        </div>
+        <strong className="v5-points">{achievement.Points ?? achievement.points ?? 0}p</strong>
+      </div>
+    );
+  }
+
+  function MissableRow({ achievement }: { achievement: any }) {
+    const guide = getTwilightMissableGuide(achievement);
+    const state = missableState(achievement);
+    return (
+      <button type="button" className={`v5-missable-row ${state.tone}`} onClick={() => setSelectedMissable(achievement)}>
+        <span className="v5-missable-icon">{state.tone === 'warning' ? '!' : state.tone === 'complete' ? '✓' : state.tone === 'upcoming' ? '◷' : 'i'}</span>
+        <span className="v5-missable-copy">
+          <b>{achievement.Title || achievement.title}</b>
+          <span>{guide?.tip || achievement.Description || achievement.description}</span>
+        </span>
+        <span className={`v5-status-pill ${state.tone}`}>{state.label}</span>
+        <span className="v5-chevron">›</span>
+      </button>
+    );
+  }
+
+  function LiveContextCard() {
+    const formLabel = effectiveRam?.linkForm === 'wolf' ? 'Wolf Link' : effectiveRam?.linkForm === 'human' ? 'Human Link' : 'Unknown';
+    return (
+      <article className="v5-panel v5-live-context">
+        <div className="v5-section-label">LIVE CONTEXT</div>
+        <div className="v5-kv"><span>Emulator</span><b>{snapshot?.dolphin.running ? 'Dolphin' : 'Offline'}</b></div>
+        <div className="v5-kv"><span>Process</span><b className={ramLive ? 'good' : ''}>{ramLive ? 'Attached' : 'Waiting'}</b></div>
+        <div className="v5-kv"><span>Profile</span><b>{gameActive ? 'Twilight Princess (GC)' : 'None'}</b></div>
+        <div className="v5-kv"><span>Stage</span><b>{effectiveRam?.stageName || effectiveRam?.stageCode || '—'}</b></div>
+        <div className="v5-kv"><span>Room</span><b>{ramRoom !== null ? ramRoom : '—'}</b></div>
+        <div className="v5-kv"><span>Form</span><b>{gameActive ? formLabel : '—'}</b></div>
+        <div className="v5-kv"><span>Session</span><b className={gameActive && ramLive ? 'good' : ''}>{gameActive && ramLive ? 'Healthy' : gameActive ? 'Fallback context' : 'Idle'}</b></div>
+      </article>
+    );
+  }
+
+  function UpdateCard({ full = false }: { full?: boolean }) {
+    const message = updateStatus?.message || (updateStatus?.available ? `Version ${updateStatus.latestVersion} is available.` : updateStatus?.ok ? 'You are on the latest version.' : updateStatus?.error || 'Check for a newer RA Companion build.');
+    return (
+      <article className={`v5-panel v5-update-card ${full ? 'full' : ''}`}>
+        <div className="v5-card-heading">
+          <div><div className="v5-section-label">APP UPDATES</div><h3>RA Companion v0.5.0</h3></div>
+          <span className={`v5-status-pill ${updatePhase === 'error' ? 'danger' : updateStatus?.available ? 'warning' : updateStatus?.ok ? 'complete' : 'neutral'}`}>{updateChip}</span>
+        </div>
+        <p className="v5-muted">{message}</p>
+        {updateInProgress && (
+          <div className="v5-update-progress" aria-live="polite">
+            <div><span>{updatePhase === 'downloading' ? 'Downloading update' : updatePhase === 'downloaded' ? 'Download complete' : 'Installing update'}</span><strong>{Math.round(updatePercent)}%</strong></div>
+            <div className="v5-progress-track"><i style={{ width: `${updatePercent}%` }} /></div>
+            <small>{updatePhase === 'installing' ? 'RA Companion will close and restart automatically.' : updatePhase === 'downloaded' ? 'Preparing the silent installer…' : 'You can keep using RA Companion while this downloads.'}</small>
+          </div>
+        )}
+        {!updateInProgress && updateHighlights.length > 0 && (
+          <ul className="v5-release-highlights">{updateHighlights.map((item) => <li key={item}>{item}</li>)}</ul>
+        )}
+        <div className="v5-update-actions">
+          <button type="button" className="secondary" disabled={updateBusy || updateInProgress} onClick={checkUpdates}>{updateBusy && !updateInProgress ? 'Checking…' : 'Check for updates'}</button>
+          {updateStatus?.available && <button type="button" disabled={updateBusy || updateInProgress} onClick={installUpdate}>{updatePhase === 'error' ? 'Try update again' : updateInProgress ? 'Updating…' : 'Update & restart'}</button>}
+        </div>
+      </article>
+    );
+  }
+
+  function Dashboard() {
+    const heroTitle = gameActive ? (data?.Title || snapshot?.game?.profile || 'The Legend of Zelda: Twilight Princess') : 'No supported game detected';
+    const formLabel = effectiveRam?.linkForm === 'wolf' ? 'Wolf Link' : effectiveRam?.linkForm === 'human' ? 'Human Link' : 'Unknown';
+    const contextLabel = companion.context.label || effectiveRam?.stageName || effectiveRam?.stageCode || 'Waiting for live context';
+    const riskLabel = companion.missables.length ? `${companion.missables.length} missable${companion.missables.length === 1 ? '' : 's'} active` : 'No urgent missables';
+    return (
+      <>
+        <header className="v5-page-header">
+          <div><span className="v5-page-icon">⌂</span><div><h1>Dashboard</h1><p>Live game context, missables and achievements — all in one place.</p></div></div>
+          <button className="secondary" onClick={refresh}>Refresh</button>
+        </header>
+
+        <section className="v5-dashboard-top">
+          <article className={`v5-panel v5-game-hero ${gameActive ? 'active' : 'idle'}`}>
+            <div className="v5-hero-topline"><div className="v5-section-label">CURRENT GAME SESSION</div><span className={`v5-risk-badge ${companion.missables.length ? 'warning' : 'clear'}`}>{companion.missables.length ? '!' : '✓'} {riskLabel}</span></div>
+            <div className="v5-hero-body">
+              {gameImageUrl() ? <img className="v5-game-icon" src={gameImageUrl()} alt="" /> : <div className="v5-game-icon placeholder">RA</div>}
+              <div className="v5-hero-copy">
+                <h2>{heroTitle}</h2>
+                <p>{gameActive ? 'GameCube · Hardcore achievement tracking' : 'Start Dolphin with Twilight Princess and RA Companion will attach automatically.'}</p>
+                <div className="v5-context-grid">
+                  <span>Current form <b>{gameActive ? formLabel : '—'}</b></span>
+                  <span>Area / context <b>{gameActive ? contextLabel : '—'}</b></span>
+                  <span>Story route <b>{gameActive ? (companion.routeLabel || 'Twilight Princess') : '—'}</b></span>
+                  <span>Risk level <b className={companion.missables.length ? 'warning-text' : 'good'}>{gameActive ? (companion.missables.length ? 'Attention' : 'Clear') : 'Idle'}</b></span>
+                </div>
+              </div>
+            </div>
+            <div className="v5-session-chips">
+              <span className={snapshot?.dolphin.running ? 'good' : ''}>● {snapshot?.dolphin.running ? 'Dolphin connected' : 'Dolphin offline'}</span>
+              <span className={ramLive ? 'good' : ''}>● {ramLive ? 'Live tracking active' : 'RAM waiting'}</span>
+              <span className={gameActive ? 'good' : ''}>● {gameActive ? 'Profile loaded' : 'No profile'}</span>
+            </div>
+          </article>
+          <LiveContextCard />
+        </section>
+
+        <section className="v5-dashboard-middle">
+          <article className="v5-panel v5-matters-panel">
+            <div className="v5-card-heading">
+              <div><div className="v5-section-label">WHAT MATTERS NOW</div><h3>Missables and important events in your current context.</h3></div>
+              <button className="secondary compact-button" onClick={() => setPage('missables')}>View all missables →</button>
+            </div>
+            <div className="v5-missable-list">
+              {companion.missables.slice(0, 3).map((achievement: any) => <MissableRow key={achievementId(achievement)} achievement={achievement} />)}
+              {!companion.missables.length && companion.comingUp.filter((a: any) => getTwilightMissableGuide(a)).slice(0, 3).map((achievement: any) => <MissableRow key={achievementId(achievement)} achievement={achievement} />)}
+              {!gameActive && <div className="v5-empty-state"><b>Waiting for a game session</b><span>Launch Twilight Princess in Dolphin. This panel will update automatically when live context becomes available.</span></div>}
+              {gameActive && !companion.missables.length && !companion.comingUp.some((a: any) => getTwilightMissableGuide(a)) && <div className="v5-clear-state"><b>Nothing urgent right now</b><span>RA Companion is watching the current story beat and will surface missables here when they become relevant.</span></div>}
+            </div>
+          </article>
+
+          <article className="v5-panel v5-relevant-panel">
+            <div className="v5-section-label">RELEVANT ACHIEVEMENTS</div>
+            <p className="v5-muted">Achievements related to your live context.</p>
+            <div className="v5-achievement-list">
+              {relevantAchievements.map((achievement: any) => <AchievementRow key={achievementId(achievement)} achievement={achievement} compact />)}
+              {!relevantAchievements.length && <div className="v5-empty-state compact"><span>Relevant achievements appear automatically as your location and story state change.</span></div>}
+            </div>
+          </article>
+        </section>
+
+        <section className="v5-dashboard-bottom">
+          <article className="v5-panel v5-health-panel">
+            <div className="v5-card-heading"><div><div className="v5-section-label">SYSTEM HEALTH</div><h3>{gameActive && ramLive ? 'Everything looks good. Keep playing.' : 'Ready when you are.'}</h3></div><button className="secondary compact-button" onClick={() => setPage('game')}>Details →</button></div>
+            <div className="v5-health-grid">
+              <div><span>▣</span><b>{snapshot?.dolphin.running ? 'Dolphin is connected' : 'Dolphin is waiting'}</b><small>{snapshot?.dolphin.running ? 'Emulator ready' : 'Start Dolphin to begin'}</small></div>
+              <div><span>▥</span><b>{ramLive ? 'Live tracking active' : 'Live tracking idle'}</b><small>{ramLive ? 'Reading game context' : 'Starts with a supported game'}</small></div>
+              <div><span>▤</span><b>{gameActive ? 'Game profile loaded' : 'No game profile'}</b><small>{gameActive ? 'Twilight Princess (GC)' : 'Waiting for supported game'}</small></div>
+            </div>
+          </article>
+          <UpdateCard />
+        </section>
+      </>
+    );
+  }
+
+  function CurrentGamePage() {
+    return (
+      <>
+        <header className="v5-page-header"><div><span className="v5-page-icon">◈</span><div><h1>Current Game</h1><p>Live context from the same read-only data source used by the overlay.</p></div></div></header>
+        <section className="v5-two-column-page">
+          <div className="v5-page-stack">
+            <article className="v5-panel">
+              <div className="v5-section-label">SESSION</div>
+              <h2>{gameActive ? (data?.Title || snapshot?.game?.profile || 'Twilight Princess') : 'No game active'}</h2>
+              <div className="v5-big-progress"><div><b>{gameActive ? `${progress.pct}%` : '—'}</b><span>Hardcore completion</span></div><div className="v5-progress-track"><i style={{ width: `${gameActive ? progress.pct : 0}%` }} /></div><small>{gameActive ? `${progress.unlocked} / ${progress.total || 149} achievements unlocked` : 'Start a supported session to begin tracking.'}</small></div>
+            </article>
+            <article className="v5-panel">
+              <div className="v5-section-label">CURRENT STORY CONTEXT</div>
+              <h3>{companion.context.label || effectiveRam?.stageName || 'Waiting for context'}</h3>
+              <p className="v5-muted">{presenceMessage || 'RA Companion will update this automatically as stage, room, form and story flags change.'}</p>
+              <div className="v5-context-detail-grid">
+                <div><span>Stage</span><b>{effectiveRam?.stageName || effectiveRam?.stageCode || '—'}</b></div>
+                <div><span>Room</span><b>{ramRoom !== null ? ramRoom : '—'}</b></div>
+                <div><span>Form</span><b>{effectiveRam?.linkForm === 'wolf' ? 'Wolf Link' : effectiveRam?.linkForm === 'human' ? 'Human Link' : '—'}</b></div>
+                <div><span>Player control</span><b>{effectiveRam?.playerControl === true ? 'Yes' : effectiveRam?.playerControl === false ? 'No' : '—'}</b></div>
+                <div><span>Cutscene</span><b>{effectiveRam?.inCutscene === true ? 'Yes' : effectiveRam?.inCutscene === false ? 'No' : '—'}</b></div>
+                <div><span>Context source</span><b>{ramLive ? 'Dolphin RAM' : serverPresenceMessage ? 'RA Rich Presence' : 'Waiting'}</b></div>
+              </div>
+            </article>
+            <article className="v5-panel">
+              <div className="v5-section-label">CURRENT & NEXT</div>
+              <div className="v5-achievement-list">{uniqueAchievements([...companion.missables, ...companion.current, ...companion.comingUp]).slice(0, 10).map((a: any) => <AchievementRow key={achievementId(a)} achievement={a} />)}</div>
+            </article>
+          </div>
+          <LiveContextCard />
+        </section>
+      </>
+    );
+  }
+
+  function AchievementsPage() {
+    return (
+      <>
+        <header className="v5-page-header"><div><span className="v5-page-icon">♛</span><div><h1>Achievements</h1><p>Your loaded Hardcore set, with live counters where reliable progress is available.</p></div></div><span className="v5-large-count">{progress.unlocked}/{progress.total || achievements.length}</span></header>
+        <article className="v5-panel">
+          <div className="v5-section-label">LOCKED ACHIEVEMENTS</div>
+          <div className="v5-achievements-grid">{locked.map((a: any) => <AchievementRow key={achievementId(a)} achievement={a} />)}</div>
+          {!achievements.length && <div className="v5-empty-state"><b>No achievement data loaded</b><span>Configure your RetroAchievements account in Settings.</span></div>}
+        </article>
+        {unlocked.length > 0 && <article className="v5-panel v5-completed-panel"><div className="v5-section-label">COMPLETED</div><div className="v5-achievements-grid">{unlocked.slice(0, 24).map((a: any) => <AchievementRow key={achievementId(a)} achievement={a} />)}</div></article>}
+      </>
+    );
+  }
+
+  function MissablesPage() {
+    return (
+      <>
+        <header className="v5-page-header"><div><span className="v5-page-icon">!</span><div><h1>Missables</h1><p>Guide-backed missables with live context and clear points of no return.</p></div></div><span className={`v5-risk-badge ${companion.missables.length ? 'warning' : 'clear'}`}>{companion.missables.length ? `${companion.missables.length} active now` : 'No urgent missables'}</span></header>
+        <div className="v5-filter-row">
+          {(['all', 'available', 'completed'] as const).map((filter) => <button key={filter} className={missableFilter === filter ? 'selected' : 'secondary'} onClick={() => setMissableFilter(filter)}>{filter === 'all' ? `All (${allMissables.length})` : filter === 'available' ? 'Available now' : 'Completed'}</button>)}
+        </div>
+        <article className="v5-panel v5-missables-page-panel">
+          <div className="v5-missable-list">{filteredMissables.map((achievement: any) => <MissableRow key={achievementId(achievement)} achievement={achievement} />)}</div>
+          {!filteredMissables.length && <div className="v5-empty-state"><b>No missables in this filter</b><span>Change the filter or continue playing; live state updates automatically.</span></div>}
+        </article>
+      </>
+    );
+  }
+
+  function OverlayPage() {
+    return (
+      <>
+        <header className="v5-page-header"><div><span className="v5-page-icon">▣</span><div><h1>Overlay</h1><p>Control the in-game companion without changing its live tracking logic.</p></div></div><button onClick={toggleOverlay}>{overlay.visible ? 'Hide overlay' : 'Show overlay'}</button></header>
+        <article className="v5-panel v5-overlay-control-panel">
+          <div className="v5-card-heading"><div><div className="v5-section-label">IN-GAME OVERLAY</div><h3>Overlay controls</h3></div><span className={`v5-status-pill ${overlay.visible ? 'complete' : 'neutral'}`}>{overlay.visible ? 'VISIBLE' : 'HIDDEN'}</span></div>
+          <div className="v5-setting-row"><div><b>Window size</b><small>{overlay.bounds ? `${overlay.bounds.width} × ${overlay.bounds.height}px` : 'Default size'} · drag any edge or corner to resize.</small></div><button className="secondary" onClick={async () => setOverlay(await window.raCompanion.resetOverlayPreset())}>Reset size</button></div>
+          <div className="v5-setting-row"><div><b>Click-through</b><small>Keep this on while playing so mouse input reaches Dolphin.</small></div><button className={`toggle-button ${overlay.clickThrough ? 'enabled' : ''}`} onClick={() => updateOverlay({ clickThrough: !overlay.clickThrough })}>{overlay.clickThrough ? 'On' : 'Off'}</button></div>
+          <div className="v5-setting-row"><div><b>Position</b><small>{overlay.manualPlacement ? 'Free placement active.' : 'Snapped to a corner.'}</small></div><div className="corner-grid">{(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as OverlayCorner[]).map((corner) => <button key={corner} className={!overlay.manualPlacement && overlay.corner === corner ? 'selected' : ''} onClick={() => updateOverlay({ corner })}>{corner === 'top-left' ? '↖' : corner === 'top-right' ? '↗' : corner === 'bottom-left' ? '↙' : '↘'}</button>)}</div></div>
+          <div className="v5-setting-row"><div><b>Opacity</b><small>{Math.round(overlay.opacity * 100)}% window opacity</small></div><input aria-label="Overlay opacity" type="range" min="65" max="100" step="1" value={Math.round(overlay.opacity * 100)} onChange={(e) => updateOverlay({ opacity: Number(e.target.value) / 100 })} /></div>
+          <div className="v5-hotkeys"><span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> Show / Hide</span><span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> Click-through</span></div>
+        </article>
+      </>
+    );
+  }
+
+  function SettingsPage() {
+    return (
+      <>
+        <header className="v5-page-header"><div><span className="v5-page-icon">⚙</span><div><h1>Settings</h1><p>RetroAchievements account and companion preferences.</p></div></div></header>
+        <form className="v5-panel v5-settings-form" onSubmit={saveSettings}>
+          <div className="v5-section-label">RETROACHIEVEMENTS</div>
+          <h3>Account connection</h3>
+          <label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Your RA username" /></label>
+          <label>Web API key<input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={hasApiKey ? 'Key already stored · enter only to replace' : 'Paste Web API key'} /></label>
+          <button type="submit">Save & connect</button>
+          <small className="v5-muted">Leaving the API key blank keeps your existing key. {apiKeyEncrypted ? 'The stored key is encrypted with Electron safeStorage.' : 'safeStorage will be used when available.'}</small>
+          {saved && <div className="saved">{saved}</div>}
+        </form>
+        {error && <article className="v5-panel error-card">{error}</article>}
+      </>
+    );
+  }
+
+  const navItems = [
+    ['dashboard', '⌂', 'Dashboard'],
+    ['game', '◈', 'Current Game'],
+    ['achievements', '♛', 'Achievements'],
+    ['missables', '!', 'Missables'],
+    ['overlay', '▣', 'Overlay'],
+    ['updates', '↓', 'Updates'],
+    ['settings', '⚙', 'Settings'],
+  ] as const;
+
+  return (
+    <main className="v5-app-shell">
+      <aside className="v5-sidebar">
+        <div className="v5-brand"><div className="v5-brand-mark">RA</div><div><b>RA Companion</b><span>Live companion for RetroAchievements players</span></div></div>
+        <nav>{navItems.map(([id, icon, label]) => <button key={id} className={page === id ? 'active' : ''} onClick={() => setPage(id)}><span>{icon}</span>{label}{id === 'missables' && companion.missables.length > 0 && <em>{companion.missables.length}</em>}</button>)}</nav>
+        <div className="v5-sidebar-footer"><span>Play smarter.</span><small>Live context · guide-backed missables</small><b>v0.5.0</b></div>
+      </aside>
+
+      <section className="v5-content">
+        {page === 'dashboard' && <Dashboard />}
+        {page === 'game' && <CurrentGamePage />}
+        {page === 'achievements' && <AchievementsPage />}
+        {page === 'missables' && <MissablesPage />}
+        {page === 'overlay' && <OverlayPage />}
+        {page === 'updates' && <><header className="v5-page-header"><div><span className="v5-page-icon">↓</span><div><h1>Updates</h1><p>Clear update status, progress and concise release highlights.</p></div></div></header><UpdateCard full /></>}
+        {page === 'settings' && <SettingsPage />}
+      </section>
+
+      {selectedMissable && (() => {
+        const guide = getTwilightMissableGuide(selectedMissable);
+        const state = missableState(selectedMissable);
+        return (
+          <div className="v5-modal-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setSelectedMissable(null); }}>
+            <article className="v5-missable-modal">
+              <button className="v5-modal-close" onClick={() => setSelectedMissable(null)} aria-label="Close">×</button>
+              <div className="v5-modal-header">
+                {badgeUrl(selectedMissable) ? <img src={badgeUrl(selectedMissable)} alt="" /> : <div className="v5-badge-placeholder" />}
+                <div><div className="v5-section-label">MISSABLE GUIDE</div><h2>{selectedMissable.Title || selectedMissable.title}</h2><span className={`v5-status-pill ${state.tone}`}>{state.label}</span></div>
+              </div>
+              <p className="v5-modal-description">{selectedMissable.Description || selectedMissable.description}</p>
+              <div className="v5-guide-sections">
+                <section><span>WHAT TO DO</span><p>{guide?.tip || 'Follow the achievement description during the related one-time story event.'}</p></section>
+                <section className="cutoff"><span>POINT OF NO RETURN</span><p>{guide?.cutoff || 'Complete this before leaving the related one-time event or story sequence.'}</p></section>
+                <section><span>RETRY / SAVE ADVICE</span><p>{guide?.retry || 'Keep a save before the relevant event when possible so a failed condition can be retried safely.'}</p></section>
+                <section><span>LIVE CONTEXT</span><p>{gameActive ? `${companion.context.label || effectiveRam?.stageName || 'Twilight Princess'} · ${effectiveRam?.linkForm === 'wolf' ? 'Wolf Link' : effectiveRam?.linkForm === 'human' ? 'Human Link' : 'form unknown'} · ${state.label}` : 'No active game session. RA Companion will update this status automatically when you play.'}</p></section>
+              </div>
+              <div className="v5-guide-source"><b>Source</b><span>RetroAchievements Twilight Princess (GameCube) missables guide · guidance is paraphrased and combined with the live RA set.</span></div>
+            </article>
+          </div>
+        );
+      })()}
+    </main>
+  );
+}
