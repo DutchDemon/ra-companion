@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - 'build-source/**'
+      - 'build-overrides/**'
       - '.github/workflows/build-windows.yml'
 
 permissions:
@@ -18,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Reconstruct source archive
+      - name: Reconstruct verified source baseline
         shell: pwsh
         run: |
           $parts = Get-ChildItem 'build-source/part*.b64' | Sort-Object Name
@@ -30,15 +31,23 @@ jobs:
           $expected = '890c9a743a93c7679ece46d858a22f7c59e96d93873135a0340ae1fbe78ef99a'
           if ($actual -ne $expected) { throw "Source SHA256 mismatch: $actual" }
           Expand-Archive $zip -DestinationPath app -Force
-          $pkg = Get-Content 'app/package.json' -Raw | ConvertFrom-Json
-          if ($pkg.version -ne '0.4.4') { throw "Expected app version 0.4.4, got $($pkg.version)" }
           "SOURCE_SHA256=$actual" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Apply v0.4.5 source overrides
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'build-overrides/src')) { throw 'Source overrides directory is missing.' }
+          Copy-Item 'build-overrides/src/*' 'app/src/' -Recurse -Force
+          & 'build-overrides/apply-v0.4.5.ps1'
+          if (-not (Test-Path 'app/src/profiles/twilightPrincessGuide.ts')) { throw 'Twilight Princess guide module was not applied.' }
+          $pkg = Get-Content 'app/package.json' -Raw | ConvertFrom-Json
+          if ($pkg.version -ne '0.4.5') { throw "Expected app version 0.4.5, got $($pkg.version)" }
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: app/package.json
+          cache-dependency-path: app/package-lock.json
 
       - name: Install dependencies
         working-directory: app
@@ -51,6 +60,8 @@ jobs:
           node --check electron/main.cjs
           node --check electron/preload.cjs
           if (Select-String -Path 'build/installer.nsh' -Pattern 'isForceCurrentInstall') { throw 'Forced per-user installer mode is not allowed.' }
+          if (-not (Select-String -Path 'src/main.tsx' -Pattern 'getTwilightMissableGuide' -Quiet)) { throw 'Guide UI hook is missing.' }
+          if (-not (Select-String -Path 'src/styles.css' -Pattern 'v0.4.5 guide-backed missable details' -Quiet)) { throw 'Guide styles are missing.' }
           npm run build
 
       - name: Build NSIS installer
@@ -63,7 +74,7 @@ jobs:
       - name: Locate installer and generate hashes
         shell: pwsh
         run: |
-          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.4.4.exe' } | Select-Object -First 1
+          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.4.5.exe' } | Select-Object -First 1
           if (-not $installer) { throw 'NSIS installer was not generated.' }
           "INSTALLER_PATH=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
           "INSTALLER_NAME=$($installer.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -71,7 +82,7 @@ jobs:
           $sha512 = (Get-FileHash $installer.FullName -Algorithm SHA512).Hash.ToLowerInvariant()
           @(
             "File: $($installer.Name)",
-            "Source SHA256: $env:SOURCE_SHA256",
+            "Source baseline SHA256: $env:SOURCE_SHA256",
             "Installer SHA256: $sha256",
             "Installer SHA512: $sha512"
           ) | Set-Content 'app/release/checksums.txt'
@@ -107,10 +118,10 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.4.4-windows
+          name: ra-companion-v0.4.5-windows
           if-no-files-found: error
           path: |
-            app/release/RA Companion Setup 0.4.4.exe
+            app/release/RA Companion Setup 0.4.5.exe
             app/release/*.blockmap
             app/release/latest.yml
             app/release/checksums.txt
@@ -123,7 +134,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.4.4-windows
+          name: ra-companion-v0.4.5-windows
           path: artifact
 
       - name: Install and update ClamAV
@@ -141,7 +152,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.4.4.exe' -print -quit)
+          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.4.5.exe' -print -quit)
           test -n "$INSTALLER"
           clamscan "$INSTALLER" | tee artifact/clamav-scan.txt
           test ${PIPESTATUS[0]} -eq 0
@@ -150,7 +161,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.4.4-antivirus
+          name: ra-companion-v0.4.5-antivirus
           path: artifact/clamav-scan.txt
           if-no-files-found: warn
 
@@ -163,76 +174,79 @@ jobs:
       - name: Download Windows build
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.4.4-windows
+          name: ra-companion-v0.4.5-windows
           path: release
 
       - name: Download ClamAV report
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.4.4-antivirus
+          name: ra-companion-v0.4.5-antivirus
           path: antivirus
 
       - name: Prepare and verify updater payload
         shell: bash
         run: |
-          test -f 'release/RA Companion Setup 0.4.4.exe'
-          test -f 'release/RA Companion Setup 0.4.4.exe.blockmap'
+          test -f 'release/RA Companion Setup 0.4.5.exe'
+          test -f 'release/RA Companion Setup 0.4.5.exe.blockmap'
           test -f 'release/latest.yml'
           test -f 'release/checksums.txt'
           test -f 'release/defender-scan.txt'
           test -f 'antivirus/clamav-scan.txt'
 
-          cp 'release/RA Companion Setup 0.4.4.exe' 'release/RA-Companion-Setup-0.4.4.exe'
-          cp 'release/RA Companion Setup 0.4.4.exe.blockmap' 'release/RA-Companion-Setup-0.4.4.exe.blockmap'
+          cp 'release/RA Companion Setup 0.4.5.exe' 'release/RA-Companion-Setup-0.4.5.exe'
+          cp 'release/RA Companion Setup 0.4.5.exe.blockmap' 'release/RA-Companion-Setup-0.4.5.exe.blockmap'
 
           EXPECTED_PATH=$(awk '/^path:/ {print $2; exit}' release/latest.yml)
-          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.4.4.exe'
+          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.4.5.exe'
           test -f "release/$EXPECTED_PATH"
           test -f "release/$EXPECTED_PATH.blockmap"
 
-      - name: Publish GitHub Release v0.4.4
+      - name: Publish GitHub Release v0.4.5
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > release-notes.md <<'EOF'
-          ## RA Companion v0.4.4 — Context-Aware Missables
+          ## RA Companion v0.4.5 — Guide-Backed Missable Warnings
 
-          - Adds live context-aware missable filtering for Twilight Princess.
-          - Reads Link form, player control, cutscene state, area/room context and selected story/event flags from Dolphin shared memory.
-          - Fixes early `Ordon't Worry` guidance so it is not shown while the player is Wolf Link.
-          - Keeps the standard assisted NSIS installer with per-user/per-machine choice and elevation support.
-          - Includes `latest.yml` and blockmap metadata for in-app updates through `electron-updater`.
+          - Adds curated Twilight Princess missable guidance based on the RetroAchievements GameCube guide.
+          - Missable cards now show practical guide advice, a clear point of no return, and retry/save guidance where applicable.
+          - Keeps the live RetroAchievements set as the primary missable signal, with a safety warning for newer missables not yet covered by the historical guide.
+          - Preserves the v0.4.4 read-only Dolphin RAM context filtering and Hardcore-safe behavior.
+          - Builds on the verified v0.4.4 source archive with readable v0.4.5 source overrides.
+          - Keeps the standard assisted NSIS installer and in-app electron-updater metadata.
+
+          Guide source: https://github.com/RetroAchievements/guides/wiki/The-Legend-of-Zelda:-Twilight-Princess-(Gamecube)
 
           The Windows installer was scanned successfully by Microsoft Defender and ClamAV in CI before this release was published.
           EOF
 
-          TAG='v0.4.4'
+          TAG='v0.4.5'
           REPO='${{ github.repository }}'
 
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            gh release delete-asset "$TAG" 'RA.Companion.Setup.0.4.4.exe' --repo "$REPO" -y || true
-            gh release delete-asset "$TAG" 'RA.Companion.Setup.0.4.4.exe.blockmap' --repo "$REPO" -y || true
+            gh release delete-asset "$TAG" 'RA.Companion.Setup.0.4.5.exe' --repo "$REPO" -y || true
+            gh release delete-asset "$TAG" 'RA.Companion.Setup.0.4.5.exe.blockmap' --repo "$REPO" -y || true
             gh release upload "$TAG" \
-              'release/RA-Companion-Setup-0.4.4.exe' \
-              'release/RA-Companion-Setup-0.4.4.exe.blockmap' \
+              'release/RA-Companion-Setup-0.4.5.exe' \
+              'release/RA-Companion-Setup-0.4.5.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" --clobber
-            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.4.4' --notes-file release-notes.md --latest
+            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.4.5' --notes-file release-notes.md --latest
           else
             gh release create "$TAG" \
-              'release/RA-Companion-Setup-0.4.4.exe' \
-              'release/RA-Companion-Setup-0.4.4.exe.blockmap' \
+              'release/RA-Companion-Setup-0.4.5.exe' \
+              'release/RA-Companion-Setup-0.4.5.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" \
               --target '${{ github.sha }}' \
-              --title 'RA Companion v0.4.4' \
+              --title 'RA Companion v0.4.5' \
               --notes-file release-notes.md \
               --latest
           fi
