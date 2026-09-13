@@ -1,4 +1,4 @@
-name: Inspect v0.5.6 Reconstructed Source
+name: Validate v0.5.7 Faron Tears Patch
 
 on:
   push:
@@ -13,9 +13,9 @@ permissions:
   contents: read
 
 jobs:
-  reconstruct:
+  validate:
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +32,7 @@ jobs:
           if ($actual -ne $expected) { throw "Source SHA256 mismatch: $actual" }
           Expand-Archive $zip -DestinationPath app -Force
 
-      - name: Apply v0.5.6 source chain
+      - name: Apply v0.5.7 source chain
         shell: pwsh
         run: |
           Copy-Item 'build-overrides/src/*' 'app/src/' -Recurse -Force
@@ -48,13 +48,32 @@ jobs:
           & 'build-overrides/apply-v0.5.4.ps1'
           & 'build-overrides/apply-v0.5.5.ps1'
           & 'build-overrides/apply-v0.5.6.ps1'
+          & 'build-overrides/apply-v0.5.7.ps1'
           $pkg = Get-Content 'app/package.json' -Raw | ConvertFrom-Json
-          if ($pkg.version -ne '0.5.6') { throw "Expected app version 0.5.6, got $($pkg.version)" }
+          if ($pkg.version -ne '0.5.7') { throw "Expected app version 0.5.7, got $($pkg.version)" }
 
-      - name: Upload reconstructed source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Run regressions
+        working-directory: app
+        run: npm run test:regressions
+
+      - name: Build renderer
+        working-directory: app
+        run: npm run build
+
+      - name: Upload validated source
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.5.6-reconstructed-source
+          name: ra-companion-v0.5.7-validated-source
           if-no-files-found: error
           path: app/
           retention-days: 1
