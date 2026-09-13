@@ -1,0 +1,67 @@
+name: Reconstruct v0.5.9 diagnostic source
+
+on:
+  push:
+    branches: [diag/v059-source-20260914]
+    paths:
+      - '.github/workflows/reconstruct-v059-source.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  reconstruct:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct verified base source
+        shell: pwsh
+        run: |
+          $parts = Get-ChildItem 'build-source/part*.b64' | Sort-Object Name
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          $zip = Join-Path $env:RUNNER_TEMP 'ra-companion-source.zip'
+          [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String($b64))
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne '890c9a743a93c7679ece46d858a22f7c59e96d93873135a0340ae1fbe78ef99a') { throw "Source SHA256 mismatch: $actual" }
+          Expand-Archive $zip -DestinationPath app -Force
+
+      - name: Apply all overrides through v0.5.9
+        shell: pwsh
+        run: |
+          Copy-Item 'build-overrides/src/*' 'app/src/' -Recurse -Force
+          Copy-Item 'build-overrides/electron/*' 'app/electron/' -Recurse -Force
+          & 'build-overrides/apply-v0.4.5.ps1'
+          & 'build-overrides/apply-v0.4.6.ps1'
+          & 'build-overrides/apply-v0.4.7.ps1'
+          & 'build-overrides/apply-v0.4.8b.ps1'
+          & 'build-overrides/apply-v0.5.0.ps1'
+          & 'build-overrides/apply-v0.5.1.ps1'
+          & 'build-overrides/apply-v0.5.2.ps1'
+          & 'build-overrides/apply-v0.5.3.ps1'
+          & 'build-overrides/apply-v0.5.4.ps1'
+          & 'build-overrides/apply-v0.5.5.ps1'
+          & 'build-overrides/apply-v0.5.6.ps1'
+          & 'build-overrides/apply-v0.5.7.ps1'
+          & 'build-overrides/apply-v0.5.8.ps1'
+          & 'hotfixes/apply-v0.5.9.ps1'
+          $pkg = Get-Content 'app/package.json' -Raw | ConvertFrom-Json
+          if ($pkg.version -ne '0.5.9') { throw "Expected v0.5.9, got $($pkg.version)" }
+
+      - name: Commit reconstructed text source to diagnostic branch
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force diagnostic-v059-source | Out-Null
+          Copy-Item app/src diagnostic-v059-source/src -Recurse -Force
+          Copy-Item app/electron diagnostic-v059-source/electron -Recurse -Force
+          New-Item -ItemType Directory -Force diagnostic-v059-source/tools | Out-Null
+          Copy-Item app/tools/ram-reader.ps1 diagnostic-v059-source/tools/ram-reader.ps1 -Force
+          Copy-Item app/package.json diagnostic-v059-source/package.json -Force
+          Copy-Item app/vite.config.* diagnostic-v059-source/ -Force -ErrorAction SilentlyContinue
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add diagnostic-v059-source
+          if (-not (git diff --cached --quiet)) {
+            git commit -m 'chore: export reconstructed v0.5.9 source for v0.6.0 work'
+            git push
+          }
