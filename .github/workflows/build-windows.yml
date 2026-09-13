@@ -12,6 +12,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: windows-release
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: windows-latest
@@ -33,7 +37,7 @@ jobs:
           Expand-Archive $zip -DestinationPath app -Force
           "SOURCE_SHA256=$actual" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Apply v0.5.0 source overrides
+      - name: Apply v0.5.1 source overrides
         shell: pwsh
         run: |
           if (-not (Test-Path 'build-overrides/src')) { throw 'Renderer source overrides directory is missing.' }
@@ -45,9 +49,11 @@ jobs:
           & 'build-overrides/apply-v0.4.7.ps1'
           & 'build-overrides/apply-v0.4.8b.ps1'
           & 'build-overrides/apply-v0.5.0.ps1'
+          & 'build-overrides/apply-v0.5.1.ps1'
           if (-not (Test-Path 'app/src/profiles/twilightPrincessGuide.ts')) { throw 'Twilight Princess guide module was not applied.' }
+          if (-not (Test-Path 'app/src/profiles/twilightPrincessState.ts')) { throw 'Twilight Princess game-state module was not applied.' }
           $pkg = Get-Content 'app/package.json' -Raw | ConvertFrom-Json
-          if ($pkg.version -ne '0.5.0') { throw "Expected app version 0.5.0, got $($pkg.version)" }
+          if ($pkg.version -ne '0.5.1') { throw "Expected app version 0.5.1, got $($pkg.version)" }
 
       - uses: actions/setup-node@v4
         with:
@@ -66,13 +72,33 @@ jobs:
           node --check electron/main.cjs
           node --check electron/preload.cjs
           if (Select-String -Path 'build/installer.nsh' -Pattern 'isForceCurrentInstall') { throw 'Forced per-user installer mode is not allowed.' }
-          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'className="v5-app-shell"' -Quiet)) { throw 'v0.5.0 app shell is missing.' }
+          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'className="v5-app-shell"' -Quiet)) { throw 'v0.5 app shell is missing.' }
           if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'const liveRam = useLiveRam();' -Quiet)) { throw 'Main UI live RAM subscription is missing.' }
+          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'buildTwilightAchievementStates' -Quiet)) { throw 'Full-set Game State Engine UI wiring is missing.' }
+          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch "String(liveRam?.gameCode || '') === 'GZ2E01'" -Quiet)) { throw 'USA-only GZ2E01 detection is missing.' }
+          if (Select-String -Path 'src/main.tsx' -SimpleMatch 'GZ2P01' -Quiet) { throw 'Unsupported PAL game code remains in the renderer.' }
+          if (Select-String -Path 'src/main.tsx' -SimpleMatch 'GZ2J01' -Quiet) { throw 'Unsupported JP game code remains in the renderer.' }
           if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'getTwilightMissableGuide(selectedMissable)' -Quiet)) { throw 'Clickable missable guide detail panel is missing.' }
           if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'WHAT MATTERS NOW' -Quiet)) { throw 'Live dashboard guidance panel is missing.' }
+          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'RA Companion v0.5.1' -Quiet)) { throw 'v0.5.1 renderer version label is missing.' }
+          if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch "TWILIGHT_GAME_STATE_ENGINE = 'tp-gz2e01-v1'" -Quiet)) { throw 'Twilight Princess Game State Engine marker is missing.' }
+          if (-not (Select-String -Path 'src/profiles/twilightPrincess.ts' -SimpleMatch 'buzzHiveDroppedSlingshot' -Quiet)) { throw 'Buzz Off hive cutoff logic is missing.' }
+          if (-not (Select-String -Path 'src/profiles/twilightPrincess.ts' -SimpleMatch 'explicitLiveRule' -Quiet)) { throw 'Explicit live RAM rules are not authoritative.' }
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'tools/ram-reader.ps1'), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            throw 'RAM reader PowerShell parse failed.'
+          }
+          $ram = Get-Content 'tools/ram-reader.ps1' -Raw
+          if (-not $ram.Contains("gameStateEngine = 'tp-gz2e01-v1'")) { throw 'RAM reader state-engine marker is missing.' }
+          if (-not $ram.Contains("'GZ2E01' =")) { throw 'GZ2E01 RAM map is missing.' }
+          if ($ram.Contains("'GZ2P01' =") -or $ram.Contains("'GZ2J01' =")) { throw 'Unsupported PAL/JP RAM maps remain.' }
+          if (-not $ram.Contains('eventBitsHex') -or -not $ram.Contains('tempBitsHex')) { throw 'Full event tables are not exposed by the RAM reader.' }
           if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'onUpdateStatusChanged' -Quiet)) { throw 'Updater progress UI subscription is missing.' }
           if (Select-String -Path 'src/main.tsx' -SimpleMatch '<div className="notice update-notes">{updateStatus?.notes}</div>' -Quiet) { throw 'Raw HTML release notes renderer is still present.' }
-          if (-not (Select-String -Path 'src/styles.css' -SimpleMatch 'v0.5.0 complete UI/UX rework' -Quiet)) { throw 'v0.5.0 UI styles are missing.' }
+          if (-not (Select-String -Path 'src/styles.css' -SimpleMatch 'v0.5.0 complete UI/UX rework' -Quiet)) { throw 'v0.5 UI styles are missing.' }
           if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'autoHideMenuBar: true' -Quiet)) { throw 'Main menu bar cleanup is missing.' }
           if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'quitAndInstall(true, true)' -Quiet)) { throw 'Silent updater install call is missing.' }
           if (Select-String -Path 'electron/main.cjs' -SimpleMatch 'quitAndInstall(false, true)' -Quiet) { throw 'Interactive updater install call is still present.' }
@@ -95,7 +121,7 @@ jobs:
       - name: Locate installer and generate hashes
         shell: pwsh
         run: |
-          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.5.0.exe' } | Select-Object -First 1
+          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.5.1.exe' } | Select-Object -First 1
           if (-not $installer) { throw 'NSIS installer was not generated.' }
           "INSTALLER_PATH=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
           "INSTALLER_NAME=$($installer.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -139,10 +165,10 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.5.0-windows
+          name: ra-companion-v0.5.1-windows
           if-no-files-found: error
           path: |
-            app/release/RA Companion Setup 0.5.0.exe
+            app/release/RA Companion Setup 0.5.1.exe
             app/release/*.blockmap
             app/release/latest.yml
             app/release/checksums.txt
@@ -155,7 +181,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.5.0-windows
+          name: ra-companion-v0.5.1-windows
           path: artifact
 
       - name: Install and update ClamAV
@@ -173,7 +199,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.5.0.exe' -print -quit)
+          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.5.1.exe' -print -quit)
           test -n "$INSTALLER"
           clamscan "$INSTALLER" | tee artifact/clamav-scan.txt
           test ${PIPESTATUS[0]} -eq 0
@@ -182,7 +208,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.5.0-antivirus
+          name: ra-companion-v0.5.1-antivirus
           path: artifact/clamav-scan.txt
           if-no-files-found: warn
 
@@ -193,75 +219,78 @@ jobs:
       - name: Download Windows build
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.5.0-windows
+          name: ra-companion-v0.5.1-windows
           path: release
 
       - name: Download ClamAV report
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.5.0-antivirus
+          name: ra-companion-v0.5.1-antivirus
           path: antivirus
 
       - name: Prepare and verify updater payload
         shell: bash
         run: |
-          test -f 'release/RA Companion Setup 0.5.0.exe'
-          test -f 'release/RA Companion Setup 0.5.0.exe.blockmap'
+          test -f 'release/RA Companion Setup 0.5.1.exe'
+          test -f 'release/RA Companion Setup 0.5.1.exe.blockmap'
           test -f 'release/latest.yml'
           test -f 'release/checksums.txt'
           test -f 'release/defender-scan.txt'
           test -f 'antivirus/clamav-scan.txt'
 
-          cp 'release/RA Companion Setup 0.5.0.exe' 'release/RA-Companion-Setup-0.5.0.exe'
-          cp 'release/RA Companion Setup 0.5.0.exe.blockmap' 'release/RA-Companion-Setup-0.5.0.exe.blockmap'
+          cp 'release/RA Companion Setup 0.5.1.exe' 'release/RA-Companion-Setup-0.5.1.exe'
+          cp 'release/RA Companion Setup 0.5.1.exe.blockmap' 'release/RA-Companion-Setup-0.5.1.exe.blockmap'
 
           EXPECTED_PATH=$(awk '/^path:/ {print $2; exit}' release/latest.yml)
-          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.5.0.exe'
+          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.5.1.exe'
           test -f "release/$EXPECTED_PATH"
           test -f "release/$EXPECTED_PATH.blockmap"
 
-      - name: Publish GitHub Release v0.5.0
+      - name: Publish GitHub Release v0.5.1
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > release-notes.md <<'EOF'
-          ## RA Companion v0.5.0 — Live Companion UI Rework
+          ## RA Companion v0.5.1 — Twilight Princess Game State Engine
 
-          - Completely reworks the main desktop UI into a focused live companion dashboard with dedicated Dashboard, Current Game, Achievements, Missables, Overlay, Updates and Settings pages.
-          - The main UI now consumes the same fast read-only Dolphin RAM context used by the overlay, so area, room, form, story context and relevant achievements update while you play.
-          - Adds clickable missables with guide-backed detail views for what to do, point of no return, retry/save advice and current live context.
-          - Adds a dedicated Missables page with live availability state and filters.
-          - Replaces raw updater release-note HTML with concise readable highlights while keeping live download progress and silent installation.
-          - Cleans up the desktop window presentation and keeps the dynamic version title, Hardcore-safe read-only RAM hook and existing overlay behavior intact.
+          - Adds the first full-set Game State Engine foundation for the Twilight Princess GameCube RetroAchievements base set: every loaded achievement now receives a shared live state used by both the desktop UI and overlay.
+          - Targets the RetroAchievements-compatible USA build only (GZ2E01), removing PAL/JP RAM mappings from the Twilight Princess reader.
+          - Reads the game's persistent and temporary event tables, inventory, life/hearts, bottles, Magic Armor, fishing data, minigame state and other save-backed context through the existing read-only Dolphin shared-memory hook.
+          - Fixes early Ordon guidance so Smiling Politely, Buzz Off! and Doing Anything for Money can surface from explicit RAM rules instead of being discarded by text/location matching.
+          - Buzz Off! now tracks the beehive world state and can become missed when the hive is knocked down before the Hanch bee event.
+          - Adds deeper live rules and progress for several one-time/missable states including Link is the Goat, Ordon't Worry and other reliable save-backed conditions, plus reusable RAM/RA counters for normal achievements.
+          - Keeps RetroAchievements itself authoritative for official unlock/completion state; RAM remains read-only and is used for live context, progress, availability and fail-state detection.
+
+          This release establishes the shared state layer for the whole base set. Exact actor-level conditions will continue to be expanded where an achievement needs more detail than the common save/event state can prove.
 
           The Windows installer was compiled and scanned successfully by Microsoft Defender and ClamAV in CI before publication.
           EOF
 
-          TAG='v0.5.0'
+          TAG='v0.5.1'
           REPO='${{ github.repository }}'
 
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release upload "$TAG" \
-              'release/RA-Companion-Setup-0.5.0.exe' \
-              'release/RA-Companion-Setup-0.5.0.exe.blockmap' \
+              'release/RA-Companion-Setup-0.5.1.exe' \
+              'release/RA-Companion-Setup-0.5.1.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" --clobber
-            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.5.0' --notes-file release-notes.md --latest
+            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.5.1' --notes-file release-notes.md --latest
           else
             gh release create "$TAG" \
-              'release/RA-Companion-Setup-0.5.0.exe' \
-              'release/RA-Companion-Setup-0.5.0.exe.blockmap' \
+              'release/RA-Companion-Setup-0.5.1.exe' \
+              'release/RA-Companion-Setup-0.5.1.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" \
               --target main \
-              --title 'RA Companion v0.5.0' \
+              --title 'RA Companion v0.5.1' \
               --notes-file release-notes.md \
               --latest
           fi
