@@ -1,0 +1,42 @@
+name: Bootstrap Electron source override
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bootstrap-electron-source.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct verified v0.4.4 source
+        shell: pwsh
+        run: |
+          $parts = Get-ChildItem 'build-source/part*.b64' | Sort-Object Name
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          $zip = Join-Path $env:RUNNER_TEMP 'ra-companion-source.zip'
+          [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String($b64))
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expected = '890c9a743a93c7679ece46d858a22f7c59e96d93873135a0340ae1fbe78ef99a'
+          if ($actual -ne $expected) { throw "Source SHA256 mismatch: $actual" }
+          Expand-Archive $zip -DestinationPath app -Force
+          if (-not (Test-Path 'app/electron/main.cjs')) { throw 'electron/main.cjs not found.' }
+
+      - name: Publish Electron baseline as build override
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path 'build-overrides/electron' | Out-Null
+          Copy-Item 'app/electron/main.cjs' 'build-overrides/electron/main.cjs' -Force
+          Copy-Item 'app/electron/preload.cjs' 'build-overrides/electron/preload.cjs' -Force
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add build-overrides/electron
+          if (git diff --cached --quiet) { exit 0 }
+          git commit -m 'Extract v0.4.4 Electron source override'
+          git push
