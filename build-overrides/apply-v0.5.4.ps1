@@ -1,15 +1,17 @@
 $ErrorActionPreference = 'Stop'
 
-$patchArchive = 'build-overrides/v0.5.4.patch.gz.b64'
-if (-not (Test-Path $patchArchive)) { throw 'v0.5.4 source patch archive is missing.' }
+$patchParts = @(Get-ChildItem 'build-overrides/v0.5.4.patch.part*.b64' | Sort-Object Name)
+if ($patchParts.Count -ne 4) { throw "Expected 4 v0.5.4 patch chunks, found $($patchParts.Count)." }
 $patchPath = Join-Path $env:RUNNER_TEMP 'ra-companion-v0.5.4.patch'
 
-# Decode through Python so the gzip payload is reproduced byte-for-byte on all
-# Windows runner images. The patch is validated by git before it is applied.
+# Reassemble small source-controlled chunks and decode byte-exactly. The final
+# patch hash is pinned before git is allowed to apply anything.
 $python = Get-Command python -ErrorAction SilentlyContinue
 if (-not $python) { throw 'Python is required to decode the v0.5.4 patch archive.' }
-& python -c "import base64,gzip,pathlib,sys; pathlib.Path(sys.argv[2]).write_bytes(gzip.decompress(base64.b64decode(pathlib.Path(sys.argv[1]).read_text().strip())))" $patchArchive $patchPath
+& python -c "import base64,gzip,pathlib,glob,sys; s=''.join(pathlib.Path(p).read_text().strip() for p in sorted(glob.glob(sys.argv[1]))); pathlib.Path(sys.argv[2]).write_bytes(gzip.decompress(base64.b64decode(s)))" 'build-overrides/v0.5.4.patch.part*.b64' $patchPath
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $patchPath)) { throw 'v0.5.4 patch decompression failed.' }
+$patchHash = (Get-FileHash $patchPath -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($patchHash -ne '294e90193f2a605c40dd2a32edaa8e413328593056ec461d283e91b135edf8b6') { throw "v0.5.4 patch SHA256 mismatch: $patchHash" }
 
 if (-not (Test-Path 'app/src/main.tsx')) { throw 'v0.5.3 working source is missing.' }
 if (-not (Test-Path 'app/src/AppPages.tsx')) { throw 'v0.5.3 stable page module is missing.' }
