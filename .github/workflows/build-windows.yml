@@ -37,7 +37,7 @@ jobs:
           Expand-Archive $zip -DestinationPath app -Force
           "SOURCE_SHA256=$actual" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Apply v0.5.4 source overrides
+      - name: Apply v0.5.5 source overrides
         shell: pwsh
         run: |
           if (-not (Test-Path 'build-overrides/src')) { throw 'Renderer source overrides directory is missing.' }
@@ -53,8 +53,9 @@ jobs:
           & 'build-overrides/apply-v0.5.2.ps1'
           & 'build-overrides/apply-v0.5.3.ps1'
           & 'build-overrides/apply-v0.5.4.ps1'
+          & 'build-overrides/apply-v0.5.5.ps1'
           $pkg = Get-Content 'app/package.json' -Raw | ConvertFrom-Json
-          if ($pkg.version -ne '0.5.4') { throw "Expected app version 0.5.4, got $($pkg.version)" }
+          if ($pkg.version -ne '0.5.5') { throw "Expected app version 0.5.5, got $($pkg.version)" }
 
       - uses: actions/setup-node@v4
         with:
@@ -91,6 +92,9 @@ jobs:
           if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch '$PROC_DOG = 0x010C' -Quiet)) { throw 'Dog actor mapping is missing.' }
           if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch '$PROC_CUCCO = 0x0108' -Quiet)) { throw 'Cucco actor mapping is missing.' }
           if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch '$_.Action -eq 15' -Quiet)) { throw 'Cucco ACTION_PLAY detection is missing.' }
+          if (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch '[ushort[]]' -Quiet) { throw 'Windows PowerShell-incompatible ushort[] actor cast remains.' }
+          if (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch '[ushort]' -Quiet) { throw 'Windows PowerShell-incompatible ushort actor cast remains.' }
+          if (-not (Select-String -Path 'tools/ram-reader.ps1' -SimpleMatch '[uint16[]]' -Quiet)) { throw 'Windows PowerShell-compatible uint16[] actor cast is missing.' }
           if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch "id === '419985'" -Quiet)) { throw 'The Hero of Puppies rule is missing.' }
           if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch "id === '419988'" -Quiet)) { throw 'McFly Cucco rule is missing.' }
           if (-not (Select-String -Path 'src/profiles/twilightPrincessState.ts' -SimpleMatch "id === '449436'" -Quiet)) { throw 'Pump up the King rule regressed.' }
@@ -119,7 +123,7 @@ jobs:
       - name: Locate installer and generate hashes
         shell: pwsh
         run: |
-          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.5.4.exe' } | Select-Object -First 1
+          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.5.5.exe' } | Select-Object -First 1
           if (-not $installer) { throw 'NSIS installer was not generated.' }
           "INSTALLER_PATH=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
           "INSTALLER_NAME=$($installer.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -161,10 +165,10 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.5.4-windows
+          name: ra-companion-v0.5.5-windows
           if-no-files-found: error
           path: |
-            app/release/RA Companion Setup 0.5.4.exe
+            app/release/RA Companion Setup 0.5.5.exe
             app/release/*.blockmap
             app/release/latest.yml
             app/release/checksums.txt
@@ -177,7 +181,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.5.4-windows
+          name: ra-companion-v0.5.5-windows
           path: artifact
 
       - name: Install and update ClamAV
@@ -195,7 +199,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.5.4.exe' -print -quit)
+          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.5.5.exe' -print -quit)
           test -n "$INSTALLER"
           clamscan "$INSTALLER" | tee artifact/clamav-scan.txt
           test ${PIPESTATUS[0]} -eq 0
@@ -204,7 +208,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.5.4-antivirus
+          name: ra-companion-v0.5.5-antivirus
           path: artifact/clamav-scan.txt
           if-no-files-found: warn
 
@@ -215,74 +219,72 @@ jobs:
       - name: Download Windows build
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.5.4-windows
+          name: ra-companion-v0.5.5-windows
           path: release
 
       - name: Download ClamAV report
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.5.4-antivirus
+          name: ra-companion-v0.5.5-antivirus
           path: antivirus
 
       - name: Prepare and verify updater payload
         shell: bash
         run: |
-          test -f 'release/RA Companion Setup 0.5.4.exe'
-          test -f 'release/RA Companion Setup 0.5.4.exe.blockmap'
+          test -f 'release/RA Companion Setup 0.5.5.exe'
+          test -f 'release/RA Companion Setup 0.5.5.exe.blockmap'
           test -f 'release/latest.yml'
           test -f 'release/checksums.txt'
           test -f 'release/defender-scan.txt'
           test -f 'antivirus/clamav-scan.txt'
-          cp 'release/RA Companion Setup 0.5.4.exe' 'release/RA-Companion-Setup-0.5.4.exe'
-          cp 'release/RA Companion Setup 0.5.4.exe.blockmap' 'release/RA-Companion-Setup-0.5.4.exe.blockmap'
+          cp 'release/RA Companion Setup 0.5.5.exe' 'release/RA-Companion-Setup-0.5.5.exe'
+          cp 'release/RA Companion Setup 0.5.5.exe.blockmap' 'release/RA-Companion-Setup-0.5.5.exe.blockmap'
           EXPECTED_PATH=$(awk '/^path:/ {print $2; exit}' release/latest.yml)
-          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.5.4.exe'
+          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.5.5.exe'
           test -f "release/$EXPECTED_PATH"
           test -f "release/$EXPECTED_PATH.blockmap"
 
-      - name: Publish GitHub Release v0.5.4
+      - name: Publish GitHub Release v0.5.5
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > release-notes.md <<'NOTES'
-          ## RA Companion v0.5.4 — Update Banner & Live Actors
+          ## RA Companion v0.5.5 — Live Actor Compatibility Fix
 
-          - Checks for updates automatically on every app start using the existing updater flow.
-          - Shows a clear amber/yellow banner across the top when a newer RA Companion version is available, with **Update now** and session-only **Later** actions.
-          - Keeps startup network failures silent so an unavailable update service never blocks normal app startup.
-          - Adds the first generic read-only Twilight Princess live actor scan for GZ2E01, designed to feed achievement context without writing game memory.
-          - **The Hero of Puppies** now becomes relevant when a live Dog actor is in the current room and detects when Link is carrying a puppy.
-          - **What's the Matter, McFly? Chicken??** now becomes relevant when a live Cucco actor is in the current room and detects the game's real `ACTION_PLAY` Cucco-control state.
-          - Exposes nearby Dog/Cucco counts in Live Context and establishes the actor-state layer for future NPC, enemy, object and boss achievement rules.
-          - Preserves the v0.5.3 focus, dynamic-version, Pump up the King, hotkey and single-instance reliability fixes.
+          - Fixes the Windows PowerShell compatibility bug that caused the v0.5.4 live actor scanner to silently report zero nearby actors.
+          - Replaces the unsupported `ushort` actor-ID cast with the PowerShell-compatible `uint16` type while keeping the scanner fully read-only.
+          - Restores live Dog detection for **The Hero of Puppies**; the fix was verified against a real Dog actor (`0x010C`) in Talo and Malo's house.
+          - Restores live Cucco detection for **What's the Matter, McFly? Chicken??**; real Ordon Village runtime tests confirmed three Cucco actors (`0x0108`) and `action = 15` while controlling one.
+          - Keeps the v0.5.4 startup update banner, automatic update check, actor-state layer, and all v0.5.3 reliability fixes intact.
+          - Adds build-time guards so the incompatible `ushort` cast cannot silently return in a future release.
 
-          The Windows installer is built only after the v0.5.3 and v0.5.4 regression suites pass, then scanned by Microsoft Defender and ClamAV before publication.
+          The Windows installer is built only after the existing regression suites and v0.5.5 actor compatibility checks pass, then scanned by Microsoft Defender and ClamAV before publication.
           NOTES
 
-          TAG='v0.5.4'
+          TAG='v0.5.5'
           REPO='${{ github.repository }}'
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release upload "$TAG" \
-              'release/RA-Companion-Setup-0.5.4.exe' \
-              'release/RA-Companion-Setup-0.5.4.exe.blockmap' \
+              'release/RA-Companion-Setup-0.5.5.exe' \
+              'release/RA-Companion-Setup-0.5.5.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" --clobber
-            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.5.4' --notes-file release-notes.md --latest
+            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.5.5' --notes-file release-notes.md --latest
           else
             gh release create "$TAG" \
-              'release/RA-Companion-Setup-0.5.4.exe' \
-              'release/RA-Companion-Setup-0.5.4.exe.blockmap' \
+              'release/RA-Companion-Setup-0.5.5.exe' \
+              'release/RA-Companion-Setup-0.5.5.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" \
               --target main \
-              --title 'RA Companion v0.5.4' \
+              --title 'RA Companion v0.5.5' \
               --notes-file release-notes.md \
               --latest
           fi
