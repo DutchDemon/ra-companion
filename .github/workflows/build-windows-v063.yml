@@ -1,19 +1,19 @@
-name: Build Windows Installer v0.6.2
+name: Build Windows Installer v0.6.3
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, release/v0.6.2]
+    branches: [main, release/v0.6.3]
     paths:
       - 'build-overrides/**'
       - 'hotfixes/**'
-      - '.github/workflows/build-windows-v062.yml'
+      - '.github/workflows/build-windows-v063.yml'
 
 permissions:
   contents: write
 
 concurrency:
-  group: windows-release-v062-${{ github.ref }}
+  group: windows-release-v063-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -37,7 +37,7 @@ jobs:
           Expand-Archive $zip -DestinationPath app -Force
           "SOURCE_SHA256=$actual" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Apply source overrides through v0.6.2
+      - name: Apply source overrides through v0.6.3
         shell: pwsh
         run: |
           Copy-Item 'build-overrides/src/*' 'app/src/' -Recurse -Force
@@ -59,10 +59,12 @@ jobs:
           & 'build-overrides/apply-v0.6.0.ps1'
           & 'build-overrides/apply-v0.6.1.ps1'
           & 'build-overrides/apply-v0.6.2.ps1'
+          & 'build-overrides/apply-v0.6.3.ps1'
           $pkg = Get-Content 'app/package.json' -Raw | ConvertFrom-Json
-          if ($pkg.version -ne '0.6.2') { throw "Expected app version 0.6.2, got $($pkg.version)" }
-          if ($pkg.build.win.icon -ne 'build/ra-icon.png') { throw 'Official RetroAchievements icon is not configured.' }
-          if (-not (Test-Path 'app/build/ra-icon.png')) { throw 'Official RetroAchievements icon asset is missing.' }
+          if ($pkg.version -ne '0.6.3') { throw "Expected app version 0.6.3, got $($pkg.version)" }
+          if ($pkg.build.win.icon -ne 'electron/ra-icon.ico') { throw 'Multi-resolution Windows icon is not configured.' }
+          if (-not (Test-Path 'app/electron/ra-icon.ico')) { throw 'Runtime Windows icon asset is missing.' }
+          if (-not (Test-Path 'app/src/assets/ra-icon.png')) { throw 'Sidebar RA logo asset is missing.' }
 
       - uses: actions/setup-node@v4
         with:
@@ -79,10 +81,15 @@ jobs:
         shell: pwsh
         run: |
           node --check electron/main.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'electron/main.cjs syntax check failed.' }
           node --check electron/preload.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'electron/preload.cjs syntax check failed.' }
+
           if (-not (Test-Path 'src/__tests__/v059.ra-authoritative-progress.test.ts')) { throw 'v0.5.9 authoritative-progress regression is missing.' }
           if (-not (Test-Path 'src/__tests__/v060.live-companion.test.ts')) { throw 'v0.6.0 live-companion regressions are missing.' }
           if (-not (Test-Path 'src/__tests__/v061.achievement-library.test.ts')) { throw 'v0.6.1 achievement-library regressions are missing.' }
+          if (-not (Test-Path 'src/__tests__/v063.branding.test.ts')) { throw 'v0.6.3 branding regressions are missing.' }
+
           if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'const progress = baseProgress;' -Quiet)) { throw 'Official RA game progress is no longer authoritative.' }
           if (Select-String -Path 'electron/main.cjs' -SimpleMatch 'const progress = mergeRecentHardcoreUnlocks(baseProgress, recent, gameId);' -Quiet) { throw 'Recent history is overriding official RA progress again.' }
           if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch "achievement-library.json" -Quiet)) { throw 'Persistent achievement library backend is missing.' }
@@ -93,23 +100,37 @@ jobs:
           if (-not (Select-String -Path 'src/AppPages.tsx' -SimpleMatch 'ra-companion-achievement-groups-v1' -Quiet)) { throw 'Collapsible game-group persistence is missing.' }
           if (-not (Select-String -Path 'src/AppPages.tsx' -SimpleMatch 'Saved achievement data remains available offline.' -Quiet)) { throw 'Offline achievement library behavior is missing.' }
           if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'quitAndInstall(true, true)' -Quiet)) { throw 'Silent updater install call is missing.' }
+
+          if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch "app.setAppUserModelId('com.dutchdemon.racompanion')" -Quiet)) { throw 'Windows AppUserModelID is missing.' }
+          if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch "const appIconPath = path.join(__dirname, 'ra-icon.ico');" -Quiet)) { throw 'Runtime icon path is missing.' }
+          if (-not (Select-String -Path 'electron/main.cjs' -SimpleMatch 'icon: appIconPath' -Quiet)) { throw 'Main BrowserWindow icon is missing.' }
+          if (Select-String -Path 'src/main.tsx' -SimpleMatch '<div className="v5-brand-mark">RA</div>' -Quiet) { throw 'Old text-tile brand returned.' }
+          if (-not (Select-String -Path 'src/main.tsx' -SimpleMatch 'src={raCompanionLogo}' -Quiet)) { throw 'Official RA logo is not used in the sidebar.' }
+          if (-not (Select-String -Path 'src/styles.css' -SimpleMatch '--ra-orange: #f28c28;' -Quiet)) { throw 'RA charcoal/orange theme is missing.' }
+
           $pkg = Get-Content 'package.json' -Raw | ConvertFrom-Json
-          if ($pkg.build.win.icon -ne 'build/ra-icon.png') { throw 'Windows app icon regressed.' }
-          if (-not (Test-Path 'build/ra-icon.png')) { throw 'Windows app icon file is missing.' }
+          if ($pkg.build.win.icon -ne 'electron/ra-icon.ico') { throw 'Windows app icon regressed.' }
+          if (-not (Test-Path 'electron/ra-icon.ico')) { throw 'Windows runtime icon file is missing.' }
+          if ((Get-Item 'electron/ra-icon.ico').Length -lt 1024) { throw 'Windows runtime icon is unexpectedly small.' }
+
           npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw "Regression tests failed with exit code $LASTEXITCODE." }
           npm run build
+          if ($LASTEXITCODE -ne 0) { throw "Production build failed with exit code $LASTEXITCODE." }
 
       - name: Build NSIS installer
         working-directory: app
         shell: pwsh
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --win nsis --x64 --publish never
+        run: |
+          npx electron-builder --win nsis --x64 --publish never
+          if ($LASTEXITCODE -ne 0) { throw "electron-builder failed with exit code $LASTEXITCODE." }
 
       - name: Locate installer and generate hashes
         shell: pwsh
         run: |
-          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.6.2.exe' } | Select-Object -First 1
+          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.6.3.exe' } | Select-Object -First 1
           if (-not $installer) { throw 'NSIS installer was not generated.' }
           "INSTALLER_PATH=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
           "INSTALLER_NAME=$($installer.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -151,10 +172,10 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.6.2-windows
+          name: ra-companion-v0.6.3-windows
           if-no-files-found: error
           path: |
-            app/release/RA Companion Setup 0.6.2.exe
+            app/release/RA Companion Setup 0.6.3.exe
             app/release/*.blockmap
             app/release/latest.yml
             app/release/checksums.txt
@@ -167,7 +188,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.6.2-windows
+          name: ra-companion-v0.6.3-windows
           path: artifact
 
       - name: Install and update ClamAV
@@ -185,7 +206,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.6.2.exe' -print -quit)
+          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.6.3.exe' -print -quit)
           test -n "$INSTALLER"
           clamscan "$INSTALLER" | tee artifact/clamav-scan.txt
           test ${PIPESTATUS[0]} -eq 0
@@ -194,7 +215,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.6.2-antivirus
+          name: ra-companion-v0.6.3-antivirus
           path: artifact/clamav-scan.txt
           if-no-files-found: warn
 
@@ -206,70 +227,73 @@ jobs:
       - name: Download Windows build
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.6.2-windows
+          name: ra-companion-v0.6.3-windows
           path: release
 
       - name: Download ClamAV report
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.6.2-antivirus
+          name: ra-companion-v0.6.3-antivirus
           path: antivirus
 
       - name: Prepare and verify updater payload
         shell: bash
         run: |
-          test -f 'release/RA Companion Setup 0.6.2.exe'
-          test -f 'release/RA Companion Setup 0.6.2.exe.blockmap'
+          test -f 'release/RA Companion Setup 0.6.3.exe'
+          test -f 'release/RA Companion Setup 0.6.3.exe.blockmap'
           test -f 'release/latest.yml'
           test -f 'release/checksums.txt'
           test -f 'release/defender-scan.txt'
           test -f 'antivirus/clamav-scan.txt'
-          cp 'release/RA Companion Setup 0.6.2.exe' 'release/RA-Companion-Setup-0.6.2.exe'
-          cp 'release/RA Companion Setup 0.6.2.exe.blockmap' 'release/RA-Companion-Setup-0.6.2.exe.blockmap'
+          cp 'release/RA Companion Setup 0.6.3.exe' 'release/RA-Companion-Setup-0.6.3.exe'
+          cp 'release/RA Companion Setup 0.6.3.exe.blockmap' 'release/RA-Companion-Setup-0.6.3.exe.blockmap'
           EXPECTED_PATH=$(awk '/^path:/ {print $2; exit}' release/latest.yml)
-          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.6.2.exe'
+          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.6.3.exe'
           test -f "release/$EXPECTED_PATH"
           test -f "release/$EXPECTED_PATH.blockmap"
 
-      - name: Publish GitHub Release v0.6.2
+      - name: Publish GitHub Release v0.6.3
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > release-notes.md <<'NOTES'
-          ## RA Companion v0.6.2 — RetroAchievements App Icon
+          ## RA Companion v0.6.3 — RetroAchievements Theme + Windows Icon Fix
 
-          - Replaces the default Electron application icon with the official RetroAchievements logo.
-          - The icon asset is sourced from the official RetroAchievements RAWeb repository and pinned to a specific RAWeb revision for reproducible builds.
-          - The icon is applied to the Windows executable, installed app and shortcuts through electron-builder.
-          - All v0.6.1 persistent achievement-library functionality remains unchanged.
+          - Applies the official RetroAchievements logo to the sidebar brand.
+          - Uses a dark charcoal interface with RetroAchievements orange accents while keeping achievement titles and copy white/neutral.
+          - Adds a proper multi-resolution Windows icon and assigns it directly to the running BrowserWindow.
+          - Adds a stable Windows AppUserModelID so the taskbar uses the RA Companion identity instead of Electron.
+          - Updates the intentionally changed Faron Vessel regression expectations from v0.6.0.
+          - Makes regression-test and production-build failures hard CI failures instead of allowing a later command to mask them.
+          - Preserves the persistent multi-game achievement library from v0.6.1.
 
-          The Windows installer is published only after regressions, the production build, Microsoft Defender and ClamAV all pass.
+          The Windows release is published only after regressions, production build, Microsoft Defender and ClamAV all pass.
           NOTES
 
-          TAG='v0.6.2'
+          TAG='v0.6.3'
           REPO='${{ github.repository }}'
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release upload "$TAG" \
-              'release/RA-Companion-Setup-0.6.2.exe' \
-              'release/RA-Companion-Setup-0.6.2.exe.blockmap' \
+              'release/RA-Companion-Setup-0.6.3.exe' \
+              'release/RA-Companion-Setup-0.6.3.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" --clobber
-            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.6.2' --notes-file release-notes.md --latest
+            gh release edit "$TAG" --repo "$REPO" --title 'RA Companion v0.6.3' --notes-file release-notes.md --latest
           else
             gh release create "$TAG" \
-              'release/RA-Companion-Setup-0.6.2.exe' \
-              'release/RA-Companion-Setup-0.6.2.exe.blockmap' \
+              'release/RA-Companion-Setup-0.6.3.exe' \
+              'release/RA-Companion-Setup-0.6.3.exe.blockmap' \
               'release/latest.yml' \
               'release/checksums.txt' \
               'release/defender-scan.txt' \
               'antivirus/clamav-scan.txt' \
               --repo "$REPO" \
               --target main \
-              --title 'RA Companion v0.6.2' \
+              --title 'RA Companion v0.6.3' \
               --notes-file release-notes.md \
               --latest
           fi
