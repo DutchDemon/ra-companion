@@ -14,7 +14,8 @@ export type AchievementCounter = {
   current: number;
   target: number;
   label: string;
-  source: 'ram' | 'ra';
+  source: 'rcheevos' | 'ram' | 'ra';
+  text?: string;
 };
 
 export type GameSessionStats = {
@@ -60,6 +61,24 @@ function explicitTargetFromText(text: string, nounPattern: RegExp) {
   if (!match) return null;
   const value = Number(match[1]);
   return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function runtimeMeasuredAchievementCounter(achievement: any, runtimeLive?: RuntimeObserverLiveState): AchievementCounter | null {
+  if (!runtimeLive?.active || runtimeLive.stale) return null;
+  const achievementId = Number(achievement?.ID ?? achievement?.id ?? 0);
+  if (!Number.isInteger(achievementId) || achievementId <= 0) return null;
+  const status = runtimeLive.statuses?.find((item) => Number(item?.achievementId || 0) === achievementId);
+  if (!status?.measured) return null;
+  const current = Number(status.measuredValue);
+  const target = Number(status.measuredTarget);
+  if (!Number.isFinite(current) || !Number.isFinite(target) || target <= 0) return null;
+  return {
+    current: Math.max(0, Math.min(current, target)),
+    target,
+    label: 'RA measured',
+    source: 'rcheevos',
+    text: String(status.measuredText || '').trim(),
+  };
 }
 
 function measuredAchievementCounter(achievement: any): AchievementCounter | null {
@@ -253,8 +272,11 @@ export function getProfileRamPresence(profile: RendererGameProfile | null | unde
   return profile?.getRamPresence?.(ram) || '';
 }
 
-export function achievementCounterForProfile(profile: RendererGameProfile | null | undefined, achievement: any, ram?: Snapshot['ram']): AchievementCounter | null {
-  return measuredAchievementCounter(achievement) || profile?.getRamCounter?.(achievement, ram) || null;
+export function achievementCounterForProfile(profile: RendererGameProfile | null | undefined, achievement: any, ram?: Snapshot['ram'], runtimeLive?: RuntimeObserverLiveState): AchievementCounter | null {
+  return runtimeMeasuredAchievementCounter(achievement, runtimeLive)
+    || measuredAchievementCounter(achievement)
+    || profile?.getRamCounter?.(achievement, ram)
+    || null;
 }
 
 export { earnedHardcore };

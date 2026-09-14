@@ -120,6 +120,47 @@ declare global {
     officialCompletionAuthority: 'retroachievements-server';
   }
 
+  interface RuntimeAchievementStatus {
+    ok?: boolean;
+    achievementId: number;
+    state: string;
+    hasHits?: boolean;
+    measured: boolean;
+    measuredValue: number;
+    measuredTarget: number;
+    measuredText: string;
+    observerOnly?: true;
+    officialCompletionAuthority?: 'retroachievements-server';
+  }
+
+  interface RuntimeObserverLiveState {
+    active: boolean;
+    sampling: boolean;
+    gameId: number | null;
+    gameCode: string;
+    helperPid: number | null;
+    targetHz: number;
+    effectiveHz: number;
+    frameCount: number;
+    startedAt: number;
+    lastFrameAt: number;
+    lastEventAt: number;
+    lastFrameDurationMs: number;
+    ageMs: number | null;
+    stale: boolean;
+    richPresence: string;
+    richPresenceUpdatedAt: number;
+    richPresenceAgeMs: number | null;
+    richPresenceLoaded: boolean;
+    statusCount: number;
+    measuredAchievementCount: number;
+    statuses: RuntimeAchievementStatus[];
+    recentEvents: Array<{ achievementId: number; type: string; value: number; timestamp: number }>;
+    lastError: string;
+    observerOnly: true;
+    officialCompletionAuthority: 'retroachievements-server';
+  }
+
   interface Window {
     raCompanion: {
       getAppVersion: () => Promise<string>;
@@ -193,6 +234,7 @@ declare global {
     runtime?: {
       auth: RuntimeAuthStatus;
       observer: RuntimeObserverSyncStatus;
+      live: RuntimeObserverLiveState;
     };
     ram?: {
       enabled: boolean;

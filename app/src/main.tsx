@@ -226,12 +226,56 @@ function ResizeHandle({ direction, disabled }: { direction: OverlayResizeDirecti
   );
 }
 
-function achievementCounter(achievement: any, ram?: Snapshot['ram'], profile: RendererGameProfile | null = getGameProfileForRam(ram)): AchievementCounter | null {
-  return achievementCounterForProfile(profile, achievement, ram);
+function achievementCounter(achievement: any, ram?: Snapshot['ram'], profile: RendererGameProfile | null = getGameProfileForRam(ram), runtimeLive?: RuntimeObserverLiveState): AchievementCounter | null {
+  return achievementCounterForProfile(profile, achievement, ram, runtimeLive);
 }
 
-function OverlayAchievement({ achievement, ram, state, profile }: { achievement: any; ram?: Snapshot['ram']; state?: GameAchievementState; profile?: RendererGameProfile | null }) {
-  const counter = state?.progress || achievementCounter(achievement, ram, profile || null);
+type LiveAchievementCounterItem = { achievement: any; counter: AchievementCounter };
+
+function normalizeCounterContext(value: unknown) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function selectLiveAchievementCounters(
+  achievements: any[],
+  counterFor: (achievement: any) => AchievementCounter | null,
+  relevantIds: Set<string>,
+  contextLabel: string,
+  limit = 4,
+): LiveAchievementCounterItem[] {
+  const context = normalizeCounterContext(contextLabel);
+  return achievements
+    .filter((achievement) => !earnedHardcore(achievement))
+    .map((achievement) => {
+      const counter = counterFor(achievement);
+      if (!counter || counter.target <= 0) return null;
+      const id = achievementId(achievement);
+      const text = normalizeCounterContext(`${achievement?.Title ?? achievement?.title ?? ''} ${achievement?.Description ?? achievement?.description ?? ''}`);
+      const relevant = relevantIds.has(id);
+      const contextMatch = Boolean(context && context.length >= 4 && text.includes(context));
+      if (counter.current <= 0 && !relevant && !contextMatch) return null;
+      const ratio = Math.max(0, Math.min(1, counter.current / counter.target));
+      const score = (counter.current >= counter.target ? 160 : counter.current > 0 ? 120 : 0)
+        + (relevant ? 90 : 0)
+        + (contextMatch ? 70 : 0)
+        + (counter.source === 'rcheevos' ? 40 : counter.source === 'ra' ? 20 : 10)
+        + ratio;
+      return { achievement, counter, score };
+    })
+    .filter(Boolean)
+    .sort((left: any, right: any) => right.score - left.score)
+    .slice(0, Math.max(1, limit))
+    .map(({ achievement, counter }: any) => ({ achievement, counter }));
+}
+
+function OverlayAchievement({ achievement, ram, state, profile, runtimeLive }: { achievement: any; ram?: Snapshot['ram']; state?: GameAchievementState; profile?: RendererGameProfile | null; runtimeLive?: RuntimeObserverLiveState }) {
+  const counter = achievementCounter(achievement, ram, profile || null, runtimeLive) || state?.progress;
   const counterPct = counter ? Math.max(0, Math.min(100, (counter.current / counter.target) * 100)) : 0;
   const guide = getProfileMissableGuide(profile, achievement);
   return (
@@ -271,12 +315,12 @@ function OverlayAchievement({ achievement, ram, state, profile }: { achievement:
   );
 }
 
-function OverlaySection({ kind, title, achievements, ram, states, profile }: { kind: string; title: string; achievements: any[]; ram?: Snapshot['ram']; states?: Map<string, GameAchievementState>; profile?: RendererGameProfile | null }) {
+function OverlaySection({ kind, title, achievements, ram, states, profile, runtimeLive }: { kind: string; title: string; achievements: any[]; ram?: Snapshot['ram']; states?: Map<string, GameAchievementState>; profile?: RendererGameProfile | null; runtimeLive?: RuntimeObserverLiveState }) {
   if (!achievements.length) return null;
   return (
     <section className={`context-section ${kind}`}>
       <div className="context-section-title"><span>{title}</span><small>{achievements.length}</small></div>
-      {achievements.map((achievement) => <OverlayAchievement key={achievementId(achievement)} achievement={achievement} ram={ram} state={states?.get(achievementId(achievement))} profile={profile} />)}
+      {achievements.map((achievement) => <OverlayAchievement key={achievementId(achievement)} achievement={achievement} ram={ram} state={states?.get(achievementId(achievement))} profile={profile} runtimeLive={runtimeLive} />)}
     </section>
   );
 }
@@ -304,6 +348,7 @@ function Overlay() {
   const fallbackSnapshotPresence = snapshot?.presence?.source === 'rcheevos-runtime' ? '' : serverPresenceMessage;
   const presenceMessage = officialPresenceMessage || fastRamPresence || fallbackSnapshotPresence;
   const presenceSource = officialPresenceMessage ? 'rcheevos-runtime' : fastRamPresence ? 'ram' : fallbackSnapshotPresence ? (snapshot?.presence?.source || 'retro-achievements') : 'none';
+  const runtimeLive = snapshot?.runtime?.live;
   const ramLive = Boolean(effectiveRam?.attached && !effectiveRam?.stale);
   const ramStage = effectiveRam?.stageName || effectiveRam?.stageCode || '';
   const ramRoom = typeof effectiveRam?.room === 'number' ? effectiveRam.room : null;
@@ -347,6 +392,21 @@ function Overlay() {
     [achievements, presenceMessage],
   );
   const contextIds = useMemo(() => new Set(companion.relevantAll.map(achievementId)), [companion.relevantAll]);
+  const liveAchievementCounters = useMemo(() => {
+    const relevantIds = new Set([
+      ...companion.missables,
+      ...companion.current,
+      ...companion.comingUp,
+      ...companion.relevantAll,
+    ].map(achievementId));
+    return selectLiveAchievementCounters(
+      achievements,
+      (achievement) => achievementCounter(achievement, effectiveRam, activeProfile, runtimeLive),
+      relevantIds,
+      companion.context.label || effectiveRam?.stageName || '',
+      3,
+    );
+  }, [achievements, companion, effectiveRam?.timestamp, runtimeLive?.lastFrameAt, runtimeLive?.stale]);
   const fallbackAchievements = useMemo(() => {
     if (!ramLive || !companion.context.label) return [];
     const seen = new Set<string>();
@@ -480,6 +540,22 @@ function Overlay() {
           </div>
         )}
 
+        {gameActive && liveAchievementCounters.length > 0 && (
+          <div className="v7-overlay-live-counters" aria-live="polite">
+            <div className="v7-live-counter-heading"><span>LIVE ACHIEVEMENT PROGRESS</span><small>{runtimeLive?.measuredAchievementCount ? `${runtimeLive.measuredAchievementCount} measured` : 'live'}</small></div>
+            {liveAchievementCounters.map(({ achievement, counter }) => {
+              const pct = Math.max(0, Math.min(100, (counter.current / counter.target) * 100));
+              return (
+                <div className="v7-overlay-counter" key={achievementId(achievement)}>
+                  <div><b>{achievement.Title || achievement.title}</b><strong>{counter.current} / {counter.target}</strong></div>
+                  <div className="v7-live-counter-track"><i style={{ width: `${pct}%` }} /></div>
+                  <small>{counter.source === 'rcheevos' ? 'RA measured · rcheevos' : counter.source === 'ram' ? 'RAM live fallback' : 'RA progress'}</small>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {!gameActive ? (
           <div className="overlay-empty no-game-active">
             <b>No game active</b>
@@ -497,11 +573,11 @@ function Overlay() {
 
             {contextTotal > 0 ? (
               <div className="context-sections">
-                <OverlaySection profile={activeProfile} kind="danger" title={ramLive ? '⚠ Missable now' : '⚠ Missable now / soon'} achievements={companion.missables} ram={effectiveRam} states={achievementStates} />
-                <OverlaySection profile={activeProfile} kind="current" title={companion.context.boss ? `🎯 Boss Now · ${companion.context.boss}` : '🎯 Current Story Beat'} achievements={companion.current} ram={effectiveRam} states={achievementStates} />
-                <OverlaySection profile={activeProfile} kind="coming" title="◉ Next Story Beat" achievements={companion.comingUp} ram={effectiveRam} states={achievementStates} />
-                <OverlaySection profile={activeProfile} kind="coming" title="◉ Story / RA context" achievements={fallbackAchievements} ram={effectiveRam} states={achievementStates} />
-                <OverlaySection profile={activeProfile} kind="current" title="◈ Live RAM Opportunity" achievements={deepLiveAchievements} ram={effectiveRam} states={achievementStates} />
+                <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="danger" title={ramLive ? '⚠ Missable now' : '⚠ Missable now / soon'} achievements={companion.missables} ram={effectiveRam} states={achievementStates} />
+                <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="current" title={companion.context.boss ? `🎯 Boss Now · ${companion.context.boss}` : '🎯 Current Story Beat'} achievements={companion.current} ram={effectiveRam} states={achievementStates} />
+                <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="coming" title="◉ Next Story Beat" achievements={companion.comingUp} ram={effectiveRam} states={achievementStates} />
+                <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="coming" title="◉ Story / RA context" achievements={fallbackAchievements} ram={effectiveRam} states={achievementStates} />
+                <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="current" title="◈ Live RAM Opportunity" achievements={deepLiveAchievements} ram={effectiveRam} states={achievementStates} />
                 {!companion.missables.length && !companion.current.length && !companion.comingUp.length && !fallbackAchievements.length && !deepLiveAchievements.length && (
                   <div className="context-clear"><b>All relevant Hardcore achievements cleared</b><span>Nothing open for this context.</span></div>
                 )}
@@ -620,8 +696,11 @@ function App() {
   const fallbackSnapshotPresence = snapshot?.presence?.source === 'rcheevos-runtime' ? '' : serverPresenceMessage;
   const presenceMessage = officialPresenceMessage || fastRamPresence || fallbackSnapshotPresence;
   const presenceSource = officialPresenceMessage ? 'rcheevos-runtime' : fastRamPresence ? 'ram' : fallbackSnapshotPresence ? (snapshot?.presence?.source || 'retro-achievements') : 'none';
+  const runtimeLive = snapshot?.runtime?.live;
   const ramRoom = typeof effectiveRam?.room === 'number' ? effectiveRam.room : null;
   const sessionStats = useMemo(() => liveSessionStats(effectiveRam, activeProfile), [effectiveRam?.timestamp, effectiveRam?.stageCode, effectiveRam?.currentHearts, effectiveRam?.maxHearts, effectiveRam?.poeSouls, effectiveRam?.goldenBugs, effectiveRam?.faronTears, effectiveRam?.storyFlags]);
+  const currentAchievementCounter = (achievement: any, ram: Snapshot['ram'] | undefined = effectiveRam, useRuntime = true) =>
+    achievementCounter(achievement, ram, activeProfile, useRuntime ? runtimeLive : undefined);
 
   const companion = useMemo(() => buildProfileContext(activeProfile, achievements, presenceMessage, {
     live: ramLive,
@@ -719,6 +798,20 @@ function App() {
     ...companion.comingUp,
   ]);
 
+  const liveAchievementCounters = useMemo(() => {
+    const relevantIds = new Set([
+      ...currentNextAchievements,
+      ...relevantAchievements,
+    ].map(achievementId));
+    return selectLiveAchievementCounters(
+      achievements,
+      (achievement) => currentAchievementCounter(achievement, effectiveRam, true),
+      relevantIds,
+      companion.context.label || effectiveRam?.stageName || '',
+      4,
+    );
+  }, [achievements, currentNextAchievements, relevantAchievements, companion.context.label, effectiveRam?.timestamp, effectiveRam?.stageName, runtimeLive?.lastFrameAt, runtimeLive?.stale]);
+
   function missableState(achievement: any): GameAchievementState {
     const id = achievementId(achievement);
     const mapped = achievementStates.get(id);
@@ -751,7 +844,7 @@ function App() {
     if (isCurrent && profile?.enhanced) return missableState(achievement);
     if (earned(achievement)) return { kind: 'completed', label: 'Completed', tone: 'complete', source: 'ra', coverage: 'tracked' };
 
-    const measured = achievementCounter(achievement, undefined);
+    const measured = currentAchievementCounter(achievement, isCurrent ? effectiveRam : undefined, isCurrent);
     if (measured && measured.target > 0 && measured.current > 0 && measured.current < measured.target) {
       return { kind: 'in_progress', label: 'In progress', tone: 'active', source: 'ra', coverage: 'counter', progress: measured };
     }
@@ -965,6 +1058,7 @@ function App() {
     updateOverlay,
     shortcutState,
     sessionStats,
+    liveAchievementCounters,
     username,
     setUsername,
     apiKey,
@@ -992,7 +1086,7 @@ function App() {
     setMissableFilter,
     setSelectedMissable,
     missableState,
-    achievementCounter,
+    achievementCounter: currentAchievementCounter,
     saveSettings,
     toggleOverlay,
     checkUpdates,
