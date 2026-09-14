@@ -1,3 +1,7 @@
+param(
+    [switch]$SelfTest
+)
+
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
@@ -9,8 +13,6 @@ Write-Host '=============================================='
 Write-Host ' RA Companion - RAM Hook Diagnostics'
 Write-Host '=============================================='
 Write-Host ''
-Write-Host 'Make sure Twilight Princess is currently running in Dolphin.'
-Write-Host 'This tool is READ-ONLY and only prints RAM hook diagnostics.'
 Write-Host ("PowerShell 64-bit: {0}" -f [Environment]::Is64BitProcess)
 Write-Host ("PowerShell path:   {0}" -f (Get-Process -Id $PID).Path)
 Write-Host ''
@@ -20,6 +22,27 @@ if (-not [Environment]::Is64BitProcess) {
     Write-Host 'Use RAM_DIAGNOSTICS.bat from the RA Companion folder; it forces the native 64-bit host.'
     exit 3
 }
+
+if ($SelfTest) {
+    if (-not (Test-Path $reader)) { throw "Packaged diagnostics is missing ram-reader.ps1: $reader" }
+    if (-not (Test-Path $helper)) { throw "Packaged diagnostics is missing ra-runtime-helper.exe: $helper" }
+
+    $rawSelfTest = @(& $helper --self-test)
+    if ($LASTEXITCODE -ne 0) { throw "Native runtime helper self-test exited with code $LASTEXITCODE." }
+    $helperSelfTest = ($rawSelfTest -join "`n") | ConvertFrom-Json
+    if (-not $helperSelfTest.ok) { throw 'Native runtime helper self-test reported failure.' }
+    if (-not $helperSelfTest.runtimeParser) { throw 'rcheevos parser self-test failed.' }
+    if (-not $helperSelfTest.gameCubeMemoryMapping) { throw 'GameCube memory mapping self-test failed.' }
+    if (-not $helperSelfTest.readOnlyBridge) { throw 'Runtime helper did not report the read-only bridge.' }
+
+    Write-Host '[OK] Packaged RAM diagnostics self-test passed.' -ForegroundColor Green
+    Write-Host ("rcheevos: {0} ({1})" -f $helperSelfTest.rcheevosVersion, $helperSelfTest.rcheevosTag)
+    exit 0
+}
+
+Write-Host 'Make sure Twilight Princess is currently running in Dolphin.'
+Write-Host 'This tool is READ-ONLY and only prints RAM hook diagnostics.'
+Write-Host ''
 
 $all = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^Dolphin' })
 if ($all.Count -eq 0) {
