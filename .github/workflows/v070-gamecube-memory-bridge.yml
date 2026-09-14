@@ -7,18 +7,25 @@ on:
     paths:
       - 'native/rcheevos-runtime-helper/**'
       - 'scripts/build-runtime-helper.ps1'
+      - 'scripts/fix-v070-memory-bridge-regressions.cjs'
+      - 'app/package.json'
+      - 'app/RAM_DIAGNOSTICS.bat'
       - 'app/electron/services/runtime-helper-service.cjs'
       - 'app/tools/ram-diagnostics.ps1'
+      - 'app/src/main.tsx'
       - 'app/src/__tests__/**'
       - 'docs/V0.7-GAMECUBE-MEMORY-BRIDGE.md'
       - '.github/workflows/v070-gamecube-memory-bridge.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: v070-gamecube-memory-bridge-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  VALIDATION_VERSION: 0.7.0-dev.2
 
 jobs:
   build:
@@ -26,6 +33,18 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package.json
+
+      - name: Apply deterministic renderer regression fix
+        shell: pwsh
+        run: |
+          node scripts/fix-v070-memory-bridge-regressions.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Renderer regression migration failed.' }
 
       - name: Build pinned rcheevos runtime helper
         shell: pwsh
@@ -82,17 +101,11 @@ jobs:
             if (-not $response -or -not $response.ok) { throw "Runtime helper command failed: $command" }
           }
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: app/package.json
-
       - name: Install dependencies
         working-directory: app
         run: npm install --no-audit --no-fund
 
-      - name: Strict syntax, regression and production checks
+      - name: Strict type, syntax, regression and production checks
         working-directory: app
         shell: pwsh
         run: |
@@ -100,12 +113,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'electron/main.cjs syntax check failed.' }
           node --check electron/services/runtime-helper-service.cjs
           if ($LASTEXITCODE -ne 0) { throw 'runtime-helper-service syntax check failed.' }
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw "TypeScript typecheck failed with exit code $LASTEXITCODE." }
           npm run test:regressions
           if ($LASTEXITCODE -ne 0) { throw "Regression tests failed with exit code $LASTEXITCODE." }
           npm run build
           if ($LASTEXITCODE -ne 0) { throw "Production build failed with exit code $LASTEXITCODE." }
 
-      - name: Build NSIS installer with memory bridge
+      - name: Stamp validation build version
+        working-directory: app
+        shell: pwsh
+        run: |
+          node -e "const fs=require('fs');const p=require('./package.json');p.version=process.env.VALIDATION_VERSION;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($pkg.version -ne $env:VALIDATION_VERSION) { throw 'Validation version stamp failed.' }
+
+      - name: Build NSIS validation installer with memory bridge
         working-directory: app
         shell: pwsh
         env:
@@ -114,11 +137,18 @@ jobs:
           npx electron-builder --win nsis --x64 --publish never
           if ($LASTEXITCODE -ne 0) { throw "electron-builder failed with exit code $LASTEXITCODE." }
 
-      - name: Verify packaged helper and Defender scan
+      - name: Verify packaged diagnostics, helper and Defender scan
         shell: pwsh
         run: |
-          $packagedHelper = 'app/release/win-unpacked/resources/app/tools/ra-runtime-helper.exe'
-          if (-not (Test-Path $packagedHelper)) { throw 'Packaged RA Companion is missing ra-runtime-helper.exe.' }
+          $packagedRoot = 'app/release/win-unpacked/resources/app'
+          $packagedHelper = Join-Path $packagedRoot 'tools/ra-runtime-helper.exe'
+          $packagedDiagnostics = Join-Path $packagedRoot 'RAM_DIAGNOSTICS.bat'
+          $packagedDiagnosticsPs1 = Join-Path $packagedRoot 'tools/ram-diagnostics.ps1'
+          $packagedReader = Join-Path $packagedRoot 'tools/ram-reader.ps1'
+          foreach ($required in @($packagedHelper, $packagedDiagnostics, $packagedDiagnosticsPs1, $packagedReader)) {
+            if (-not (Test-Path $required)) { throw "Packaged RA Companion is missing required diagnostics file: $required" }
+          }
+
           $selfTestOutput = & $packagedHelper --self-test
           if ($LASTEXITCODE -ne 0) { throw 'Packaged runtime helper self-test failed.' }
           $selfTest = $selfTestOutput | ConvertFrom-Json
@@ -126,12 +156,27 @@ jobs:
             throw 'Packaged runtime helper reported an invalid GameCube memory self-test.'
           }
 
-          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.6.4.exe' } | Select-Object -First 1
-          if (-not $installer) { throw 'NSIS installer was not generated.' }
+          $diagOutput = & $env:ComSpec /d /c "`"$packagedDiagnostics`" -SelfTest" 2>&1
+          $diagExit = $LASTEXITCODE
+          $diagOutput | Set-Content 'app/release/packaged-diagnostics-self-test.txt'
+          if ($diagExit -ne 0) { throw "Packaged RAM_DIAGNOSTICS.bat self-test failed with exit code $diagExit.`n$($diagOutput -join "`n")" }
+          if (($diagOutput -join "`n") -notmatch 'Packaged RAM diagnostics self-test passed') {
+            throw 'Packaged diagnostics self-test did not report success.'
+          }
+
+          $packagedPackage = Get-Content (Join-Path $packagedRoot 'package.json') -Raw | ConvertFrom-Json
+          if ($packagedPackage.version -ne $env:VALIDATION_VERSION) {
+            throw "Packaged app version is $($packagedPackage.version), expected $env:VALIDATION_VERSION."
+          }
+
+          $expectedInstallerName = "RA Companion Setup $env:VALIDATION_VERSION.exe"
+          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq $expectedInstallerName } | Select-Object -First 1
+          if (-not $installer) { throw "NSIS validation installer was not generated: $expectedInstallerName" }
 
           $report = 'app/release/defender-scan.txt'
           "Installer: $($installer.FullName)" | Set-Content $report
           "Helper: $((Resolve-Path $packagedHelper).Path)" | Add-Content $report
+          "Diagnostics: $((Resolve-Path $packagedDiagnostics).Path)" | Add-Content $report
           $status = Get-MpComputerStatus -ErrorAction Stop
           "AntivirusEnabled: $($status.AntivirusEnabled)" | Add-Content $report
           "AntivirusSignatureVersion: $($status.AntivirusSignatureVersion)" | Add-Content $report
@@ -152,10 +197,12 @@ jobs:
           name: v070-gamecube-memory-bridge-validation
           if-no-files-found: error
           path: |
-            app/release/RA Companion Setup 0.6.4.exe
-            app/release/RA Companion Setup 0.6.4.exe.blockmap
+            app/release/RA Companion Setup 0.7.0-dev.2.exe
+            app/release/RA Companion Setup 0.7.0-dev.2.exe.blockmap
             app/release/latest.yml
             app/release/defender-scan.txt
+            app/release/packaged-diagnostics-self-test.txt
+            app/release/win-unpacked/resources/app/RAM_DIAGNOSTICS.bat
             app/tools/ra-runtime-helper.exe
             app/tools/ram-diagnostics.ps1
             gamecube-memory-self-test.txt
@@ -178,9 +225,33 @@ jobs:
           sudo systemctl stop clamav-freshclam.service || true
           sudo pkill -x freshclam || true
           sudo freshclam
-          INSTALLER=$(find artifact -type f -name 'RA Companion Setup 0.6.4.exe' -print -quit)
+          INSTALLER=$(find artifact -type f -name 'RA Companion Setup 0.7.0-dev.2.exe' -print -quit)
           HELPER=$(find artifact -type f -name 'ra-runtime-helper.exe' -print -quit)
           test -n "$INSTALLER"
           test -n "$HELPER"
           clamscan "$INSTALLER" "$HELPER" | tee artifact/clamav-scan.txt
           test ${PIPESTATUS[0]} -eq 0
+
+  promote-renderer-fix:
+    needs: [build, clamav]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/v0.7.0-gamecube-memory-bridge
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Promote validated renderer fix to canonical source
+        shell: bash
+        run: |
+          node scripts/fix-v070-memory-bridge-regressions.cjs
+          if git diff --quiet -- app/src/main.tsx; then
+            echo 'Renderer source is already canonical.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main.tsx
+          git commit -m 'fix: prevent game-start renderer crash'
+          git push origin HEAD:feature/v0.7.0-gamecube-memory-bridge
