@@ -6,6 +6,7 @@
 #include "dolphin_memory.h"
 #include "rc_error.h"
 #include "rc_runtime.h"
+#include "rc_runtime_types.h"
 #include "rc_version.h"
 
 #ifndef RA_RCHEEVOS_TAG
@@ -13,8 +14,18 @@
 #endif
 
 #define RA_RUNTIME_PROTOCOL_VERSION 1
-#define RA_LINE_BUFFER_SIZE 4096
+#define RA_LINE_BUFFER_SIZE 32768
+#define RA_DEFINITION_BUFFER_SIZE 24576
 #define RA_DIAGNOSTIC_READ_MAX 64u
+#define RA_FRAME_EVENT_MAX 128u
+
+typedef struct synthetic_memory_t {
+  const uint8_t* data;
+  uint32_t size;
+} synthetic_memory_t;
+
+static rc_runtime_event_t g_frame_events[RA_FRAME_EVENT_MAX];
+static uint32_t g_frame_event_count = 0;
 
 static int extract_uint_field(const char* json, const char* field, unsigned long* value) {
   char needle[64];
@@ -98,8 +109,62 @@ static void write_json_string(const char* value) {
   putchar('"');
 }
 
+static const char* trigger_state_name(uint8_t state) {
+  switch (state) {
+    case RC_TRIGGER_STATE_INACTIVE: return "inactive";
+    case RC_TRIGGER_STATE_WAITING: return "waiting";
+    case RC_TRIGGER_STATE_ACTIVE: return "active";
+    case RC_TRIGGER_STATE_PAUSED: return "paused";
+    case RC_TRIGGER_STATE_RESET: return "reset";
+    case RC_TRIGGER_STATE_TRIGGERED: return "triggered";
+    case RC_TRIGGER_STATE_PRIMED: return "primed";
+    case RC_TRIGGER_STATE_DISABLED: return "disabled";
+    default: return "unknown";
+  }
+}
+
+static const char* runtime_event_name(uint8_t type) {
+  switch (type) {
+    case RC_RUNTIME_EVENT_ACHIEVEMENT_ACTIVATED: return "activated";
+    case RC_RUNTIME_EVENT_ACHIEVEMENT_PAUSED: return "paused";
+    case RC_RUNTIME_EVENT_ACHIEVEMENT_RESET: return "reset";
+    case RC_RUNTIME_EVENT_ACHIEVEMENT_TRIGGERED: return "triggered";
+    case RC_RUNTIME_EVENT_ACHIEVEMENT_PRIMED: return "primed";
+    case RC_RUNTIME_EVENT_ACHIEVEMENT_DISABLED: return "disabled";
+    case RC_RUNTIME_EVENT_ACHIEVEMENT_UNPRIMED: return "unprimed";
+    case RC_RUNTIME_EVENT_ACHIEVEMENT_PROGRESS_UPDATED: return "progress";
+    case RC_RUNTIME_EVENT_LBOARD_STARTED: return "leaderboard-started";
+    case RC_RUNTIME_EVENT_LBOARD_CANCELED: return "leaderboard-canceled";
+    case RC_RUNTIME_EVENT_LBOARD_UPDATED: return "leaderboard-updated";
+    case RC_RUNTIME_EVENT_LBOARD_TRIGGERED: return "leaderboard-triggered";
+    case RC_RUNTIME_EVENT_LBOARD_DISABLED: return "leaderboard-disabled";
+    default: return "unknown";
+  }
+}
+
+static void RC_CCONV capture_runtime_event(const rc_runtime_event_t* runtime_event) {
+  if (!runtime_event || g_frame_event_count >= RA_FRAME_EVENT_MAX) return;
+  g_frame_events[g_frame_event_count++] = *runtime_event;
+}
+
+static uint32_t RC_CCONV dolphin_runtime_peek(uint32_t address, uint32_t num_bytes, void* ud) {
+  const dolphin_memory_t* memory = (const dolphin_memory_t*)ud;
+  int ok = 0;
+  const uint32_t value = dolphin_memory_peek_le(memory, address, num_bytes, &ok);
+  return ok ? value : 0u;
+}
+
+static uint32_t RC_CCONV synthetic_runtime_peek(uint32_t address, uint32_t num_bytes, void* ud) {
+  const synthetic_memory_t* memory = (const synthetic_memory_t*)ud;
+  uint32_t value = 0;
+  uint32_t index;
+  if (!memory || !memory->data || num_bytes == 0 || num_bytes > 4 || address > memory->size || num_bytes > memory->size - address) return 0;
+  for (index = 0; index < num_bytes; ++index) value |= ((uint32_t)memory->data[address + index]) << (index * 8u);
+  return value;
+}
+
 static void write_ready(void) {
-  printf("{\"type\":\"ready\",\"protocolVersion\":%d,\"rcheevosVersion\":\"%s\",\"rcheevosTag\":\"%s\",\"runtimeInitialized\":true,\"gameCubeMemoryBridge\":true}\n",
+  printf("{\"type\":\"ready\",\"protocolVersion\":%d,\"rcheevosVersion\":\"%s\",\"rcheevosTag\":\"%s\",\"runtimeInitialized\":true,\"gameCubeMemoryBridge\":true,\"observerEvaluation\":true}\n",
          RA_RUNTIME_PROTOCOL_VERSION, rc_version_string(), RA_RCHEEVOS_TAG);
   fflush(stdout);
 }
@@ -162,6 +227,47 @@ static void write_read_memory(unsigned long id, const dolphin_memory_t* memory, 
   fputs("\"}\n", stdout);
 }
 
+static void write_achievement_status(unsigned long id, const rc_runtime_t* runtime, uint32_t achievement_id) {
+  rc_trigger_t* trigger = rc_runtime_get_achievement(runtime, achievement_id);
+  unsigned measured_value = 0;
+  unsigned measured_target = 0;
+  int has_measured;
+  char measured_text[64] = "";
+
+  if (!trigger) {
+    write_error_response(id, "achievementStatus", "Achievement is not active in the local observer runtime.");
+    return;
+  }
+
+  has_measured = rc_runtime_get_achievement_measured(runtime, achievement_id, &measured_value, &measured_target);
+  if (has_measured) rc_runtime_format_achievement_measured(runtime, achievement_id, measured_text, sizeof(measured_text));
+
+  write_response_prefix(id, "achievementStatus");
+  printf("\"ok\":true,\"achievementId\":%u,\"state\":", achievement_id);
+  write_json_string(trigger_state_name(trigger->state));
+  printf(",\"hasHits\":%s,\"measured\":%s,\"measuredValue\":%u,\"measuredTarget\":%u,\"measuredText\":",
+         trigger->has_hits ? "true" : "false",
+         has_measured ? "true" : "false",
+         measured_value,
+         measured_target);
+  write_json_string(has_measured ? measured_text : "");
+  fputs("}\n", stdout);
+}
+
+static void write_frame_result(unsigned long id) {
+  uint32_t index;
+  write_response_prefix(id, "evaluateFrame");
+  printf("\"ok\":true,\"eventCount\":%u,\"events\":[", g_frame_event_count);
+  for (index = 0; index < g_frame_event_count; ++index) {
+    const rc_runtime_event_t* event = &g_frame_events[index];
+    if (index) putchar(',');
+    printf("{\"achievementId\":%u,\"type\":", event->id);
+    write_json_string(runtime_event_name(event->type));
+    printf(",\"value\":%d}", event->value);
+  }
+  fputs("]}\n", stdout);
+}
+
 static int run_memory_self_test(void) {
   uint32_t address = 0;
   uint8_t synthetic[4] = {0x12, 0x34, 0x56, 0x78};
@@ -182,11 +288,40 @@ static int run_memory_self_test(void) {
   return 1;
 }
 
+static int run_observer_self_test(void) {
+  rc_runtime_t runtime;
+  uint8_t ram[2] = {0, 7};
+  synthetic_memory_t memory;
+  unsigned measured_value = 0;
+  unsigned measured_target = 0;
+  int result;
+  int ok = 1;
+
+  memory.data = ram;
+  memory.size = (uint32_t)sizeof(ram);
+  rc_runtime_init(&runtime);
+
+  result = rc_runtime_activate_achievement(&runtime, 2, "M:0xH0001>=10", NULL, 0);
+  if (result != RC_OK || runtime.trigger_count != 1 || !runtime.triggers[0].trigger) ok = 0;
+
+  if (ok) {
+    runtime.triggers[0].trigger->state = RC_TRIGGER_STATE_ACTIVE;
+    g_frame_event_count = 0;
+    rc_runtime_do_frame(&runtime, capture_runtime_event, synthetic_runtime_peek, &memory, NULL);
+    if (!rc_runtime_get_achievement_measured(&runtime, 2, &measured_value, &measured_target)) ok = 0;
+    if (measured_value != 7 || measured_target != 10) ok = 0;
+  }
+
+  rc_runtime_destroy(&runtime);
+  return ok;
+}
+
 static int run_self_test(void) {
   rc_runtime_t runtime;
   int result;
   int parser_success = 1;
   int memory_success;
+  int observer_success;
 
   rc_runtime_init(&runtime);
 
@@ -201,16 +336,18 @@ static int run_self_test(void) {
 
   rc_runtime_destroy(&runtime);
   memory_success = run_memory_self_test();
+  observer_success = run_observer_self_test();
 
   printf("{\"ok\":%s,\"protocolVersion\":%d,\"rcheevosVersion\":\"%s\",\"rcheevosTag\":\"%s\","
-         "\"runtimeParser\":%s,\"gameCubeMemoryMapping\":%s,\"readOnlyBridge\":true}\n",
-         parser_success && memory_success ? "true" : "false",
+         "\"runtimeParser\":%s,\"gameCubeMemoryMapping\":%s,\"observerRuntime\":%s,\"readOnlyBridge\":true}\n",
+         parser_success && memory_success && observer_success ? "true" : "false",
          RA_RUNTIME_PROTOCOL_VERSION,
          rc_version_string(),
          RA_RCHEEVOS_TAG,
          parser_success ? "true" : "false",
-         memory_success ? "true" : "false");
-  return parser_success && memory_success ? 0 : 1;
+         memory_success ? "true" : "false",
+         observer_success ? "true" : "false");
+  return parser_success && memory_success && observer_success ? 0 : 1;
 }
 
 int main(int argc, char** argv) {
@@ -243,11 +380,11 @@ int main(int argc, char** argv) {
 
     if (strcmp(command, "ping") == 0) {
       write_response_prefix(id, "ping");
-      printf("\"ok\":true,\"protocolVersion\":%d,\"rcheevosVersion\":\"%s\",\"rcheevosTag\":\"%s\"}\n",
+      printf("\"ok\":true,\"protocolVersion\":%d,\"rcheevosVersion\":\"%s\",\"rcheevosTag\":\"%s\",\"observerEvaluation\":true}\n",
              RA_RUNTIME_PROTOCOL_VERSION, rc_version_string(), RA_RCHEEVOS_TAG);
     } else if (strcmp(command, "status") == 0) {
       write_response_prefix(id, "status");
-      printf("\"ok\":true,\"runtimeInitialized\":true,\"achievementCount\":%u,\"leaderboardCount\":%u,\"dolphinAttached\":%s}\n",
+      printf("\"ok\":true,\"runtimeInitialized\":true,\"observerOnly\":true,\"achievementCount\":%u,\"leaderboardCount\":%u,\"dolphinAttached\":%s}\n",
              runtime.trigger_count, runtime.lboard_count,
              dolphin_memory_is_attached(&dolphin_memory) ? "true" : "false");
     } else if (strcmp(command, "attachDolphin") == 0) {
@@ -273,6 +410,51 @@ int main(int argc, char** argv) {
         write_error_response(id, "readMemory", "address and numBytes are required.");
       } else {
         write_read_memory(id, &dolphin_memory, (uint32_t)address, (uint32_t)num_bytes);
+      }
+    } else if (strcmp(command, "activateAchievement") == 0) {
+      unsigned long achievement_id = 0;
+      char definition[RA_DEFINITION_BUFFER_SIZE];
+      int result;
+      rc_trigger_t* trigger;
+      if (!extract_uint_field(line, "achievementId", &achievement_id) || achievement_id == 0 || achievement_id > 0xFFFFFFFFul) {
+        write_error_response(id, "activateAchievement", "A valid achievementId is required.");
+      } else if (!extract_string_field(line, "definition", definition, sizeof(definition)) || definition[0] == '\0') {
+        write_error_response(id, "activateAchievement", "A raw rcheevos achievement definition is required.");
+      } else {
+        result = rc_runtime_activate_achievement(&runtime, (uint32_t)achievement_id, definition, NULL, 0);
+        if (result != RC_OK) {
+          write_error_response(id, "activateAchievement", rc_error_str(result));
+        } else {
+          trigger = rc_runtime_get_achievement(&runtime, (uint32_t)achievement_id);
+          write_response_prefix(id, "activateAchievement");
+          printf("\"ok\":true,\"achievementId\":%lu,\"state\":", achievement_id);
+          write_json_string(trigger ? trigger_state_name(trigger->state) : "unknown");
+          fputs(",\"observerOnly\":true}\n", stdout);
+        }
+      }
+    } else if (strcmp(command, "deactivateAchievement") == 0) {
+      unsigned long achievement_id = 0;
+      if (!extract_uint_field(line, "achievementId", &achievement_id) || achievement_id == 0 || achievement_id > 0xFFFFFFFFul) {
+        write_error_response(id, "deactivateAchievement", "A valid achievementId is required.");
+      } else {
+        rc_runtime_deactivate_achievement(&runtime, (uint32_t)achievement_id);
+        write_response_prefix(id, "deactivateAchievement");
+        printf("\"ok\":true,\"achievementId\":%lu}\n", achievement_id);
+      }
+    } else if (strcmp(command, "evaluateFrame") == 0) {
+      if (!dolphin_memory_is_attached(&dolphin_memory)) {
+        write_error_response(id, "evaluateFrame", "Dolphin memory must be attached before observer evaluation.");
+      } else {
+        g_frame_event_count = 0;
+        rc_runtime_do_frame(&runtime, capture_runtime_event, dolphin_runtime_peek, &dolphin_memory, NULL);
+        write_frame_result(id);
+      }
+    } else if (strcmp(command, "achievementStatus") == 0) {
+      unsigned long achievement_id = 0;
+      if (!extract_uint_field(line, "achievementId", &achievement_id) || achievement_id == 0 || achievement_id > 0xFFFFFFFFul) {
+        write_error_response(id, "achievementStatus", "A valid achievementId is required.");
+      } else {
+        write_achievement_status(id, &runtime, (uint32_t)achievement_id);
       }
     } else if (strcmp(command, "reset") == 0) {
       rc_runtime_reset(&runtime);
