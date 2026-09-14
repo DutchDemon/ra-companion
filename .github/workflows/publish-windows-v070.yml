@@ -1,0 +1,137 @@
+name: Publish Windows v0.7.0 Validated Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-windows-v070.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+env:
+  RELEASE_VERSION: 0.7.0
+  RELEASE_TAG: v0.7.0
+  SOURCE_RUN_ID: '34907314499'
+  SOURCE_HEAD_SHA: '2fa26d6ca1421c4f75341463b36342628f5b93ad'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify source release run succeeded
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" --jq '.head_sha')
+          test "$ACTUAL_SHA" = "$SOURCE_HEAD_SHA"
+
+          BUILD_RESULT=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs?per_page=100" --jq '.jobs[] | select(.name == "build") | .conclusion')
+          CLAM_RESULT=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs?per_page=100" --jq '.jobs[] | select(.name == "clamav") | .conclusion')
+          test "$BUILD_RESULT" = 'success'
+          test "$CLAM_RESULT" = 'success'
+
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; refusing to replace it."
+            exit 1
+          fi
+
+      - name: Download validated Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ra-companion-v0.7.0-windows
+          path: payload
+          repository: ${{ github.repository }}
+          run-id: 34907314499
+          github-token: ${{ github.token }}
+
+      - name: Download validated ClamAV artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ra-companion-v0.7.0-antivirus
+          path: antivirus
+          repository: ${{ github.repository }}
+          run-id: 34907314499
+          github-token: ${{ github.token }}
+
+      - name: Verify and prepare updater payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT='payload/release'
+          INSTALLER="$ROOT/RA Companion Setup 0.7.0.exe"
+          BLOCKMAP="$ROOT/RA Companion Setup 0.7.0.exe.blockmap"
+          LATEST="$ROOT/latest.yml"
+          test -f "$INSTALLER"
+          test -f "$BLOCKMAP"
+          test -f "$LATEST"
+          test -f "$ROOT/checksums.txt"
+          test -f "$ROOT/defender-scan.txt"
+          test -f 'payload/release-helper-self-test.txt'
+          test -f 'antivirus/clamav-scan.txt'
+
+          grep -q '^version: 0.7.0$' "$LATEST"
+          grep -q 'RESULT: NO DETECTION' "$ROOT/defender-scan.txt"
+
+          EXPECTED_PATH=$(awk '/^path:/ {print $2; exit}' "$LATEST" | tr -d '\r')
+          test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.7.0.exe'
+
+          EXPECTED_SHA512=$(awk '/^sha512:/ {print $2; exit}' "$LATEST" | tr -d '\r')
+          ACTUAL_SHA512=$(openssl dgst -sha512 -binary "$INSTALLER" | base64 -w0)
+          test "$ACTUAL_SHA512" = "$EXPECTED_SHA512"
+
+          cp "$INSTALLER" "$ROOT/$EXPECTED_PATH"
+          cp "$BLOCKMAP" "$ROOT/$EXPECTED_PATH.blockmap"
+          test -f "$ROOT/$EXPECTED_PATH"
+          test -f "$ROOT/$EXPECTED_PATH.blockmap"
+          echo "UPDATER_INSTALLER=$EXPECTED_PATH" >> "$GITHUB_ENV"
+
+      - name: Publish GitHub Release v0.7.0
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<'NOTES'
+          ## RA Companion v0.7.0 — Live rcheevos Runtime
+
+          This release moves RA Companion's live gameplay context onto official RetroAchievements runtime definitions while keeping Dolphin memory strictly read-only.
+
+          - Adds separate RetroAchievements runtime authentication and official game patch data loading.
+          - Evaluates official RetroAchievements Rich Presence locally through pinned rcheevos v12.5.0.
+          - Shows live Rich Presence in Current Game Session, Current Game and the gameplay overlay.
+          - Adds reliable live X/Y achievement counters from rcheevos measured progress.
+          - Falls back to RA API measured progress and explicitly supported read-only RAM counters when needed.
+          - Keeps Twilight Princess live RAM context available as a fallback for game-specific information.
+          - Keeps observer runtime state isolated across game/account changes.
+          - Preserves overlay stability, Windows taskbar/icon fixes and updater support.
+
+          ### Integrity and safety
+          Completed/Locked remains authoritative from the RetroAchievements server. The local runtime is display/observer-only, Dolphin access remains read-only, and RA Companion does not submit gameplay sessions, pings, achievement unlocks or leaderboard entries.
+
+          ### Known limitation
+          Chest achievements without official measured progress will not show an X/Y counter until their exact chest/Tbox flag mapping has been verified. RA Companion deliberately does not guess those mappings.
+
+          The published Windows artifacts passed the full production build, pinned native rcheevos validation, packaged-app checks, Microsoft Defender and ClamAV.
+          NOTES
+
+          ROOT='payload/release'
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_HEAD_SHA" \
+            --title 'RA Companion v0.7.0' \
+            --notes-file release-notes.md \
+            --latest \
+            "$ROOT/$UPDATER_INSTALLER" \
+            "$ROOT/$UPDATER_INSTALLER.blockmap" \
+            "$ROOT/latest.yml" \
+            "$ROOT/checksums.txt" \
+            "$ROOT/defender-scan.txt" \
+            'antivirus/clamav-scan.txt' \
+            'payload/release-helper-self-test.txt'
+
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,url,assets
