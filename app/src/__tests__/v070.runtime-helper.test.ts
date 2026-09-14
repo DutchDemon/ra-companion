@@ -9,6 +9,7 @@ function source(path: string) {
 describe('v0.7 native rcheevos runtime helper', () => {
   const helper = source('../native/rcheevos-runtime-helper/main.c');
   const cmake = source('../native/rcheevos-runtime-helper/CMakeLists.txt');
+  const observerScript = source('../native/rcheevos-runtime-helper/RCHEEVOS_OBSERVER_ONESHOT.ps1');
   const service = source('electron/services/runtime-helper-service.cjs');
   const main = source('electron/main.cjs');
   const ipc = source('electron/ipc/register.cjs');
@@ -36,6 +37,26 @@ describe('v0.7 native rcheevos runtime helper', () => {
     expect(service).toContain('JSON.stringify({ id, command, ...payload })');
     expect(service).toContain("message.type === 'ready'");
     expect(service).toContain("message.type === 'response'");
+  });
+
+  it('evaluates raw definitions only as an observer against the read-only Dolphin bridge', () => {
+    expect(helper).toContain('strcmp(command, "activateAchievement")');
+    expect(helper).toContain('strcmp(command, "evaluateFrame")');
+    expect(helper).toContain('strcmp(command, "achievementStatus")');
+    expect(helper).toContain('rc_runtime_do_frame(&runtime, capture_runtime_event, dolphin_runtime_peek');
+    expect(helper).toContain('rc_runtime_get_achievement_measured');
+    expect(helper).toContain('observerOnly');
+    expect(helper).not.toContain('awardachievement');
+    expect(helper).not.toContain('submitlbentry');
+    expect(helper).not.toContain('ping.php');
+  });
+
+  it('has a real-Dolphin measured probe that compares rcheevos with the native memory read', () => {
+    expect(observerScript).toContain("$probeDefinition = 'M:0xH0040AFC0>=255'");
+    expect(observerScript).toContain("command = 'evaluateFrame'");
+    expect(observerScript).toContain("command = 'achievementStatus'");
+    expect(observerScript).toContain('$status.measuredValue -eq $expectedByte');
+    expect(observerScript).toContain('No official achievement state was changed.');
   });
 
   it('starts and stops the helper at the Electron lifecycle boundary', () => {
