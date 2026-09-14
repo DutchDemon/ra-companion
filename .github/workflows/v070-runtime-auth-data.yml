@@ -1,0 +1,103 @@
+name: v0.7 Runtime Auth + Game Data
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/v0.7.0-runtime-auth-data]
+    paths:
+      - 'app/**'
+      - 'scripts/test-ra-runtime-data-service.cjs'
+      - 'scripts/apply-v070-runtime-auth-data.cjs'
+      - '.github/workflows/v070-runtime-auth-data.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v070-runtime-auth-data-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Apply deterministic runtime auth integration
+        shell: pwsh
+        run: |
+          node scripts/apply-v070-runtime-auth-data.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime auth integration migration failed.' }
+
+      - name: Validate service behavior and syntax
+        shell: pwsh
+        run: |
+          node --check app/electron/services/ra-runtime-data-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'RA runtime data service syntax check failed.' }
+          node --check app/electron/main.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Electron main syntax check failed.' }
+          node --check app/electron/ipc/register.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'IPC syntax check failed.' }
+          node --check app/electron/preload.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Preload syntax check failed.' }
+          node scripts/test-ra-runtime-data-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'RA runtime data service tests failed.' }
+          node scripts/test-observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer runtime service tests failed.' }
+
+      - name: Guard observer-only network surface
+        shell: pwsh
+        run: |
+          $service = Get-Content 'app/electron/services/ra-runtime-data-service.cjs' -Raw
+          foreach ($forbidden in @("r: 'startsession'", "r: 'ping'", "r: 'awardachievement'", "r: 'submitlbentry'")) {
+            if ($service.Contains($forbidden)) { throw "Forbidden runtime endpoint found in service: $forbidden" }
+          }
+          if (-not $service.Contains("r: 'login2'")) { throw 'Runtime login2 token exchange is missing.' }
+          if (-not $service.Contains("r: 'patch'")) { throw 'Official patch-data request is missing.' }
+          if ($service.Contains('apiKey: credential.token')) { throw 'Runtime token must not be repurposed as the Web API key.' }
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Strict type, regression and production checks
+        working-directory: app
+        shell: pwsh
+        run: |
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript typecheck failed.' }
+          npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed.' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Production build failed.' }
+
+  promote:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/v0.7.0-runtime-auth-data
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Promote validated integration to canonical source
+        shell: bash
+        run: |
+          node scripts/apply-v070-runtime-auth-data.cjs
+          if git diff --quiet -- app/electron/main.cjs app/electron/ipc/register.cjs app/electron/preload.cjs app/src/global.d.ts app/src/AppPages.tsx; then
+            echo 'Canonical source already contains the runtime auth integration.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/electron/main.cjs app/electron/ipc/register.cjs app/electron/preload.cjs app/src/global.d.ts app/src/AppPages.tsx
+          git commit -m 'feat: wire secure RA runtime data connection'
+          git push origin HEAD:feature/v0.7.0-runtime-auth-data
