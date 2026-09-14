@@ -51,6 +51,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'config-service syntax check failed.' }
           node --check electron/services/update-service.cjs
           if ($LASTEXITCODE -ne 0) { throw 'update-service syntax check failed.' }
+          node --check electron/services/achievement-library-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'achievement-library-service syntax check failed.' }
           node --check electron/ipc/register.cjs
           if ($LASTEXITCODE -ne 0) { throw 'IPC registration syntax check failed.' }
 
