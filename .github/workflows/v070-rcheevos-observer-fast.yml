@@ -6,7 +6,9 @@ on:
     branches: [feature/v0.7.0-rcheevos-observer]
     paths:
       - 'native/rcheevos-runtime-helper/**'
+      - 'app/electron/services/observer-runtime-service.cjs'
       - 'scripts/build-runtime-helper.ps1'
+      - 'scripts/test-observer-runtime-service.cjs'
       - '.github/workflows/v070-rcheevos-observer-fast.yml'
 
 concurrency:
@@ -19,6 +21,18 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate observer game-definition session service
+        shell: pwsh
+        run: |
+          node --check app/electron/services/observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer runtime service syntax check failed.' }
+          node scripts/test-observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer runtime service tests failed.' }
 
       - name: Build pinned rcheevos helper
         shell: pwsh
