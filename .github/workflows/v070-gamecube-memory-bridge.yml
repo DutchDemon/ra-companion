@@ -13,6 +13,8 @@ on:
       - 'app/electron/services/runtime-helper-service.cjs'
       - 'app/tools/ram-diagnostics.ps1'
       - 'app/src/main.tsx'
+      - 'app/src/profiles/registry.ts'
+      - 'app/src/shims.d.ts'
       - 'app/src/__tests__/**'
       - 'docs/V0.7-GAMECUBE-MEMORY-BRIDGE.md'
       - '.github/workflows/v070-gamecube-memory-bridge.yml'
@@ -242,16 +244,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Promote validated renderer fix to canonical source
+      - name: Promote validated renderer/profile fixes to canonical source
         shell: bash
         run: |
           node scripts/fix-v070-memory-bridge-regressions.cjs
-          if git diff --quiet -- app/src/main.tsx; then
-            echo 'Renderer source is already canonical.'
+          if git diff --quiet -- app/src/main.tsx app/src/profiles/registry.ts; then
+            echo 'Renderer/profile source is already canonical.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add app/src/main.tsx
+          git add app/src/main.tsx app/src/profiles/registry.ts
           git commit -m 'fix: prevent game-start renderer crash'
           git push origin HEAD:feature/v0.7.0-gamecube-memory-bridge
