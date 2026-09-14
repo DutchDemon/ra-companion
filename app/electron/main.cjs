@@ -1076,23 +1076,44 @@ async function getSnapshot(forceRa = false) {
     };
   }
 
+  const runtimeLive = observerRuntimeService.getLiveState();
+  const runtimePresenceMessage = (
+    runtimeLive?.active &&
+    Number(runtimeLive.gameId || 0) === Number(gameId || 0) &&
+    runtimeLive.richPresenceLoaded &&
+    !runtimeLive.stale
+  ) ? String(runtimeLive.richPresence || '').trim() : '';
   const ramPresenceMessage = activeProfile?.buildRamPresence?.(ram) || '';
+  const hasLiveRuntimeContext = Boolean(runtimePresenceMessage);
   const hasLiveRamContext = Boolean(ramPresenceMessage);
+  const hasLocalContext = hasLiveRuntimeContext || hasLiveRamContext;
   const [baseProgress, recent, profile] = await Promise.all([
     getRaProgress(gameId, forceRa),
     getRaRecentAchievements(),
-    hasLiveRamContext ? Promise.resolve(null) : getRaProfile(),
+    hasLocalContext ? Promise.resolve(null) : getRaProfile(),
   ]);
   const progress = baseProgress;
 
   let presence;
-  if (hasLiveRamContext) {
+  if (hasLiveRuntimeContext) {
+    presence = {
+      ok: true,
+      message: runtimePresenceMessage,
+      lastGameId: gameId,
+      currentGameMatches: true,
+      source: 'rcheevos-runtime',
+      live: true,
+      updatedAt: Number(runtimeLive?.richPresenceUpdatedAt || 0) || null,
+      ageMs: runtimeLive?.richPresenceAgeMs ?? null,
+    };
+  } else if (hasLiveRamContext) {
     presence = {
       ok: true,
       message: ramPresenceMessage,
       lastGameId: gameId,
       currentGameMatches: true,
       source: 'ram',
+      live: true,
     };
   } else if (profile?.ok) {
     presence = {
@@ -1101,6 +1122,7 @@ async function getSnapshot(forceRa = false) {
       lastGameId: profile.lastGameId,
       currentGameMatches: profile.lastGameId === gameId,
       source: 'retro-achievements',
+      live: false,
     };
   } else {
     presence = {
@@ -1110,6 +1132,7 @@ async function getSnapshot(forceRa = false) {
       lastGameId: null,
       currentGameMatches: false,
       source: 'none',
+      live: false,
     };
   }
 

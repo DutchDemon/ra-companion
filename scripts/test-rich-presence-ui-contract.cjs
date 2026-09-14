@@ -1,0 +1,18 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const root = path.resolve(__dirname, '..');
+const main = fs.readFileSync(path.join(root, 'app/electron/main.cjs'), 'utf8');
+const renderer = fs.readFileSync(path.join(root, 'app/src/main.tsx'), 'utf8');
+const pages = fs.readFileSync(path.join(root, 'app/src/AppPages.tsx'), 'utf8');
+const types = fs.readFileSync(path.join(root, 'app/src/global.d.ts'), 'utf8');
+assert(main.includes("source: 'rcheevos-runtime'"));
+assert(main.includes('hasLiveRuntimeContext'));
+assert(main.indexOf('if (hasLiveRuntimeContext)') < main.indexOf('else if (hasLiveRamContext)'));
+assert(renderer.includes('officialPresenceMessage || fastRamPresence || fallbackSnapshotPresence'));
+assert(renderer.includes('v7-overlay-rich-presence'));
+assert(pages.includes('v7-session-rich-presence'));
+assert(pages.includes("'Official RA · rcheevos'"));
+assert(types.includes("'rcheevos-runtime' | 'ram' | 'retro-achievements' | 'none'"));
+assert(main.includes('const progress = baseProgress;'));
+console.log('rich-presence-ui contract: passed');

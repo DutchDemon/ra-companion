@@ -284,7 +284,10 @@ declare global {
       message: string;
       lastGameId: number | null;
       currentGameMatches: boolean;
-      source?: 'ram' | 'retro-achievements' | 'none';
+      source?: 'rcheevos-runtime' | 'ram' | 'retro-achievements' | 'none';
+      live?: boolean;
+      updatedAt?: number | null;
+      ageMs?: number | null;
     };
   }
 }
