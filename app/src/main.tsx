@@ -691,7 +691,7 @@ function App() {
   ]);
   const deepUpcomingMissables = achievements.filter((achievement: any) => {
     const mapped = achievementStates.get(achievementId(achievement));
-    return Boolean(getTwilightMissableGuide(achievement) && mapped?.coverage === 'deep' && mapped.kind === 'upcoming' && !earnedHardcore(achievement));
+    return Boolean(getAchievementGuide(achievement, activeGameId) && mapped?.coverage === 'deep' && mapped.kind === 'upcoming' && !earnedHardcore(achievement));
   });
   const upcomingMissables = uniqueAchievements([
     ...companion.comingUp.filter((achievement: any) => Boolean(getAchievementGuide(achievement, activeGameId))),
