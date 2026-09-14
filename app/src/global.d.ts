@@ -124,10 +124,16 @@ declare global {
       pid: number | null;
       processName?: string;
       detectedGameId: number | null;
+      detectedProfileKey?: string | null;
     };
     game: {
       id: number | null;
+      key?: string | null;
       profile: string;
+      platform?: string;
+      region?: string;
+      enhanced?: boolean;
+      detectionSource?: 'window-title' | 'ram' | 'ra-game-id' | 'none' | string;
       autoDetected: boolean;
       active: boolean;
     };

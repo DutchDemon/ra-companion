@@ -2,9 +2,22 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import './styles.css';
 import raCompanionLogo from './assets/ra-icon.png';
-import { buildTwilightContext, earnedHardcore, isFaronTearAchievement, isFaronTearObjectiveActive, isMissableAchievement } from './profiles/twilightPrincess';
-import { getTwilightMissableGuide } from './profiles/twilightPrincessGuide';
-import { buildTwilightAchievementStates, type TwilightAchievementState } from './profiles/twilightPrincessState';
+import {
+  GAME_PROFILES,
+  achievementCounterForProfile,
+  buildProfileAchievementStates,
+  buildProfileContext,
+  earnedHardcore,
+  getGameProfileByRaGameId,
+  getGameProfileForRam,
+  getProfileMissableGuide,
+  getProfileRamPresence,
+  getProfileSessionStats,
+  isMissableForProfile,
+  type AchievementCounter,
+  type GameAchievementState,
+  type RendererGameProfile,
+} from './profiles/registry';
 import { AppViewContext, Dashboard, CurrentGamePage, AchievementsPage, OverlayPage, SettingsPage, UpdateBanner, UpdateCard } from './AppPages';
 
 function achievementArray(data: any) {
@@ -121,41 +134,12 @@ function useLiveRam() {
   return ram;
 }
 
-function liveSessionStats(ram: Snapshot['ram'] | undefined) {
-  const live = Boolean(ram?.attached && !ram?.stale && ram?.mapped && ram?.gameCode === 'GZ2E01');
-  const location = live ? String(ram?.stageName || ram?.stageCode || '').trim() : '';
-  const form = ram?.linkForm === 'wolf' ? 'Wolf Link' : ram?.linkForm === 'human' ? 'Human Link' : 'Unknown';
-  const hearts = typeof ram?.currentHearts === 'number' && typeof ram?.maxHearts === 'number' ? `${ram.currentHearts}/${ram.maxHearts}` : '—';
-  const poeSouls = typeof ram?.poeSouls === 'number' ? `${ram.poeSouls}/60` : '—';
-  const goldenBugs = typeof ram?.goldenBugs === 'number' ? `${ram.goldenBugs}/24` : '—';
-  const stageCode = String(ram?.stageCode || '').trim();
-  const faronTearsActive = ['F_SP108', 'R_SP108', 'D_SB10'].includes(stageCode)
-    && ram?.storyFlags?.faronVesselObtained === true
-    && typeof ram?.faronTears === 'number';
-  const contextStat = faronTearsActive
-    ? `Tears of Light ${Math.max(0, Math.min(16, Number(ram?.faronTears || 0)))}/16`
-    : typeof ram?.fusedShadows === 'number' && ram.fusedShadows > 0 && ram.fusedShadows < 4
-      ? `Fused Shadows ${ram.fusedShadows}/4`
-      : typeof ram?.mirrorShards === 'number' && ram.mirrorShards > 0 && ram.mirrorShards < 4
-        ? `Mirror Shards ${ram.mirrorShards}/4`
-        : '';
-  return { live, location, form, hearts, poeSouls, goldenBugs, contextStat };
+function liveSessionStats(ram: Snapshot['ram'] | undefined, profile: RendererGameProfile | null = getGameProfileForRam(ram)) {
+  return getProfileSessionStats(profile, ram);
 }
 
-function ramPresenceMessage(ram: Snapshot['ram'] | undefined) {
-  const stats = liveSessionStats(ram);
-  if (!stats.live) return '';
-  const marker = ram?.kind === 'dungeon' ? '🏰' : ram?.kind === 'area' ? '🗺️' : ram?.kind === 'building' ? '🏠' : ram?.kind === 'cave' ? '🕳️' : '';
-  if (!marker || !stats.location) return '';
-  const formMarker = ram?.linkForm === 'wolf' ? '🐺Link' : ram?.linkForm === 'human' ? '🧝Link' : 'Link';
-  return [
-    formMarker,
-    `${marker}${stats.location}${ram?.boss ? ` ☠️${String(ram.boss).trim()}` : ''}`,
-    stats.hearts !== '—' ? `❤️${stats.hearts}` : '',
-    stats.poeSouls !== '—' ? `👻${stats.poeSouls}` : '',
-    stats.goldenBugs !== '—' ? `🐜${stats.goldenBugs}` : '',
-    stats.contextStat ? `· ${stats.contextStat}` : '',
-  ].filter(Boolean).join(' ');
+function ramPresenceMessage(ram: Snapshot['ram'] | undefined, profile: RendererGameProfile | null = getGameProfileForRam(ram)) {
+  return getProfileRamPresence(profile, ram);
 }
 
 function useShortcutState() {
@@ -242,109 +226,14 @@ function ResizeHandle({ direction, disabled }: { direction: OverlayResizeDirecti
   );
 }
 
-type AchievementCounter = {
-  current: number;
-  target: number;
-  label: string;
-  source: 'ram' | 'ra';
-};
-
-function firstFiniteNumber(...values: any[]) {
-  for (const value of values) {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
+function achievementCounter(achievement: any, ram?: Snapshot['ram'], profile: RendererGameProfile | null = getGameProfileForRam(ram)): AchievementCounter | null {
+  return achievementCounterForProfile(profile, achievement, ram);
 }
 
-function explicitTargetFromText(text: string, nounPattern: RegExp) {
-  const match = text.match(new RegExp(`(?:collect|find|obtain|have|get|all)\\s+(?:all\\s+)?(\\d+)\\s+${nounPattern.source}`, 'i'))
-    || text.match(new RegExp(`(\\d+)\\s+${nounPattern.source}`, 'i'));
-  if (!match) return null;
-  const value = Number(match[1]);
-  return Number.isFinite(value) && value > 0 ? value : null;
-}
-
-function achievementCounter(achievement: any, ram?: Snapshot['ram']): AchievementCounter | null {
-  const title = String(achievement?.Title ?? achievement?.title ?? '');
-  const description = String(achievement?.Description ?? achievement?.description ?? '');
-  const text = `${title} ${description}`;
-
-  // Some RA/emulator payloads expose measured progress directly. Use it when present.
-  const measuredCurrent = firstFiniteNumber(
-    achievement?.MeasuredProgress,
-    achievement?.measuredProgress,
-    achievement?.MeasuredValue,
-    achievement?.measuredValue,
-  );
-  const measuredTarget = firstFiniteNumber(
-    achievement?.MeasuredTarget,
-    achievement?.measuredTarget,
-    achievement?.Target,
-    achievement?.target,
-  );
-  if (measuredCurrent !== null && measuredTarget !== null && measuredTarget > 0) {
-    return { current: Math.max(0, measuredCurrent), target: measuredTarget, label: 'Progress', source: 'ra' };
-  }
-
-  if (!ram?.attached || ram?.stale) return null;
-
-  if (/poe\s*souls?|poes?\b/i.test(text)) {
-    const target = explicitTargetFromText(text, /poe\s*souls?|poes?/i);
-    if (target && typeof ram.poeSouls === 'number') {
-      return { current: Math.min(Math.max(0, ram.poeSouls), target), target, label: 'Poe Souls', source: 'ram' };
-    }
-  }
-
-  if (/golden\s+bugs?|bugs?\b/i.test(text)) {
-    const target = explicitTargetFromText(text, /(?:golden\s+)?bugs?/i);
-    if (target && typeof ram.goldenBugs === 'number') {
-      return { current: Math.min(Math.max(0, ram.goldenBugs), target), target, label: 'Golden Bugs', source: 'ram' };
-    }
-  }
-
-  if (/fused\s+shadows?/i.test(text)) {
-    const target = explicitTargetFromText(text, /fused\s+shadows?/i);
-    if (target && typeof ram.fusedShadows === 'number') {
-      return { current: Math.min(Math.max(0, ram.fusedShadows), target), target, label: 'Fused Shadows', source: 'ram' };
-    }
-  }
-
-  if (/mirror(?:\s+of\s+twilight)?\s+(?:shards?|fragments?|pieces?)/i.test(text)) {
-    const target = explicitTargetFromText(text, /mirror(?:\s+of\s+twilight)?\s+(?:shards?|fragments?|pieces?)/i);
-    if (target && typeof ram.mirrorShards === 'number') {
-      return { current: Math.min(Math.max(0, ram.mirrorShards), target), target, label: 'Mirror Shards', source: 'ram' };
-    }
-  }
-
-  if (/tears?\s+of\s+light/i.test(text)) {
-    if (isFaronTearAchievement(achievement) && !isFaronTearObjectiveActive(achievement, {
-      live: true,
-      stageCode: ram.stageCode,
-      storyFlags: ram.storyFlags,
-    })) return null;
-
-    const target = explicitTargetFromText(text, /tears?\s+of\s+light/i);
-    const regionValue = /faron/i.test(text) ? ram.faronTears : /eldin/i.test(text) ? ram.eldinTears : /lanayru/i.test(text) ? ram.lanayruTears : null;
-    if (target && typeof regionValue === 'number') {
-      return { current: Math.min(Math.max(0, regionValue), target), target, label: 'Tears of Light', source: 'ram' };
-    }
-  }
-
-  if (/game\s+overs?/i.test(text)) {
-    const target = explicitTargetFromText(text, /game\s+overs?/i);
-    if (target && typeof ram.gameOvers === 'number') {
-      return { current: Math.min(Math.max(0, ram.gameOvers), target), target, label: 'Game Overs', source: 'ram' };
-    }
-  }
-
-  return null;
-}
-
-function OverlayAchievement({ achievement, ram, state }: { achievement: any; ram?: Snapshot['ram']; state?: TwilightAchievementState }) {
-  const counter = state?.progress || achievementCounter(achievement, ram);
+function OverlayAchievement({ achievement, ram, state, profile }: { achievement: any; ram?: Snapshot['ram']; state?: GameAchievementState; profile?: RendererGameProfile | null }) {
+  const counter = state?.progress || achievementCounter(achievement, ram, profile || null);
   const counterPct = counter ? Math.max(0, Math.min(100, (counter.current / counter.target) * 100)) : 0;
-  const guide = getTwilightMissableGuide(achievement);
+  const guide = getProfileMissableGuide(profile, achievement);
   return (
     <div className="context-achievement">
       {badgeUrl(achievement) ? <img src={badgeUrl(achievement)} alt="" /> : <div className="overlay-badge-placeholder" />}
@@ -382,12 +271,12 @@ function OverlayAchievement({ achievement, ram, state }: { achievement: any; ram
   );
 }
 
-function OverlaySection({ kind, title, achievements, ram, states }: { kind: string; title: string; achievements: any[]; ram?: Snapshot['ram']; states?: Map<string, TwilightAchievementState> }) {
+function OverlaySection({ kind, title, achievements, ram, states, profile }: { kind: string; title: string; achievements: any[]; ram?: Snapshot['ram']; states?: Map<string, GameAchievementState>; profile?: RendererGameProfile | null }) {
   if (!achievements.length) return null;
   return (
     <section className={`context-section ${kind}`}>
       <div className="context-section-title"><span>{title}</span><small>{achievements.length}</small></div>
-      {achievements.map((achievement) => <OverlayAchievement key={achievementId(achievement)} achievement={achievement} ram={ram} state={states?.get(achievementId(achievement))} />)}
+      {achievements.map((achievement) => <OverlayAchievement key={achievementId(achievement)} achievement={achievement} ram={ram} state={states?.get(achievementId(achievement))} profile={profile} />)}
     </section>
   );
 }
@@ -401,22 +290,21 @@ function Overlay() {
   const toastTimer = useRef<number | null>(null);
   const movePointer = useRef<number | null>(null);
   const liveRam = useLiveRam();
-  const liveRamDetectsGame = Boolean(
-    liveRam?.attached &&
-    !liveRam?.stale &&
-    String(liveRam?.gameCode || '') === 'GZ2E01',
-  );
+  const liveRamProfile = getGameProfileForRam(liveRam);
+  const snapshotProfile = getGameProfileByRaGameId(snapshot?.game?.id);
+  const activeProfile = snapshotProfile || liveRamProfile;
+  const liveRamDetectsGame = Boolean(liveRamProfile);
   const gameActive = Boolean(snapshot?.game?.active || liveRamDetectsGame);
   const data = snapshot?.progress?.data;
   const achievements = useMemo(() => achievementArray(data), [data]);
   const serverPresenceMessage = snapshot?.presence?.ok && snapshot?.presence?.currentGameMatches ? snapshot.presence.message : '';
-  const effectiveRam = liveRamDetectsGame ? liveRam : snapshot?.ram;
-  const fastRamPresence = ramPresenceMessage(effectiveRam);
+  const effectiveRam = liveRamProfile && (!snapshotProfile || liveRamProfile.key === activeProfile?.key) ? liveRam : snapshot?.ram;
+  const fastRamPresence = ramPresenceMessage(effectiveRam, activeProfile);
   const presenceMessage = fastRamPresence || serverPresenceMessage;
   const ramLive = Boolean(effectiveRam?.attached && !effectiveRam?.stale);
   const ramStage = effectiveRam?.stageName || effectiveRam?.stageCode || '';
   const ramRoom = typeof effectiveRam?.room === 'number' ? effectiveRam.room : null;
-  const companion = useMemo(() => buildTwilightContext(achievements, presenceMessage, {
+  const companion = useMemo(() => buildProfileContext(activeProfile, achievements, presenceMessage, {
     live: ramLive,
     stageCode: effectiveRam?.stageCode,
     stageName: effectiveRam?.stageName,
@@ -448,11 +336,11 @@ function Overlay() {
     effectiveRam?.stateFlags,
   ]);
   const achievementStates = useMemo(
-    () => buildTwilightAchievementStates(achievements, effectiveRam, companion),
+    () => buildProfileAchievementStates(activeProfile, achievements, effectiveRam, companion),
     [achievements, companion, effectiveRam?.timestamp, effectiveRam?.eventBitsHex, effectiveRam?.stateFlags, effectiveRam?.storyFlags, effectiveRam?.actors],
   );
   const broaderCompanion = useMemo(
-    () => buildTwilightContext(achievements, presenceMessage, { live: false }),
+    () => buildProfileContext(activeProfile, achievements, presenceMessage, { live: false }),
     [achievements, presenceMessage],
   );
   const contextIds = useMemo(() => new Set(companion.relevantAll.map(achievementId)), [companion.relevantAll]);
@@ -460,7 +348,7 @@ function Overlay() {
     if (!ramLive || !companion.context.label) return [];
     const seen = new Set<string>();
     return [...broaderCompanion.current, ...broaderCompanion.comingUp, ...broaderCompanion.relevantAll]
-      .filter((achievement: any) => !earnedHardcore(achievement) && !isMissableAchievement(achievement))
+      .filter((achievement: any) => !earnedHardcore(achievement) && !isMissableForProfile(activeProfile, achievement))
       .filter((achievement: any) => {
         const id = achievementId(achievement);
         if (!id || contextIds.has(id) || seen.has(id)) return false;
@@ -469,7 +357,7 @@ function Overlay() {
       })
       .slice(0, 2);
   }, [broaderCompanion, companion.context.label, contextIds, ramLive]);
-  const overlayStats = useMemo(() => liveSessionStats(effectiveRam), [effectiveRam?.timestamp, effectiveRam?.stageCode, effectiveRam?.currentHearts, effectiveRam?.maxHearts, effectiveRam?.poeSouls, effectiveRam?.goldenBugs, effectiveRam?.faronTears, effectiveRam?.storyFlags]);
+  const overlayStats = useMemo(() => liveSessionStats(effectiveRam, activeProfile), [effectiveRam?.timestamp, effectiveRam?.stageCode, effectiveRam?.currentHearts, effectiveRam?.maxHearts, effectiveRam?.poeSouls, effectiveRam?.goldenBugs, effectiveRam?.faronTears, effectiveRam?.storyFlags]);
   const deepLiveAchievements = useMemo(() => achievements.filter((achievement: any) => {
     const mapped = achievementStates.get(achievementId(achievement));
     return Boolean(mapped?.coverage === 'deep' && ['available', 'in_progress', 'pending'].includes(mapped.kind) && !contextIds.has(achievementId(achievement)));
@@ -541,7 +429,7 @@ function Overlay() {
   const noContextReason = !snapshot?.presence?.ok
     ? snapshot?.presence?.error || 'RetroAchievements Rich Presence is unavailable.'
     : !snapshot?.presence?.currentGameMatches
-      ? 'Waiting for RetroAchievements to report Twilight Princess as your active game.'
+      ? `Waiting for RetroAchievements to report ${activeProfile?.title || 'the current game'} as your active game.`
       : 'Waiting for a recognizable area or dungeon in RetroAchievements Rich Presence.';
 
   return (
@@ -584,7 +472,7 @@ function Overlay() {
         {!gameActive ? (
           <div className="overlay-empty no-game-active">
             <b>No game active</b>
-            <span>{snapshot?.dolphin.running ? 'Dolphin is open, but no supported game is currently detected.' : 'Start Twilight Princess in Dolphin and the companion will resume automatically.'}</span>
+            <span>{snapshot?.dolphin.running ? 'Dolphin is open, but no supported game is currently detected.' : 'Start a supported game in Dolphin and the companion will resume automatically.'}</span>
           </div>
         ) : companion.relevantAll.length ? (
           <>
@@ -598,11 +486,11 @@ function Overlay() {
 
             {contextTotal > 0 ? (
               <div className="context-sections">
-                <OverlaySection kind="danger" title={ramLive ? '⚠ Missable now' : '⚠ Missable now / soon'} achievements={companion.missables} ram={effectiveRam} states={achievementStates} />
-                <OverlaySection kind="current" title={companion.context.boss ? `🎯 Boss Now · ${companion.context.boss}` : '🎯 Current Story Beat'} achievements={companion.current} ram={effectiveRam} states={achievementStates} />
-                <OverlaySection kind="coming" title="◉ Next Story Beat" achievements={companion.comingUp} ram={effectiveRam} states={achievementStates} />
-                <OverlaySection kind="coming" title="◉ Story / RA context" achievements={fallbackAchievements} ram={effectiveRam} states={achievementStates} />
-                <OverlaySection kind="current" title="◈ Live RAM Opportunity" achievements={deepLiveAchievements} ram={effectiveRam} states={achievementStates} />
+                <OverlaySection profile={activeProfile} kind="danger" title={ramLive ? '⚠ Missable now' : '⚠ Missable now / soon'} achievements={companion.missables} ram={effectiveRam} states={achievementStates} />
+                <OverlaySection profile={activeProfile} kind="current" title={companion.context.boss ? `🎯 Boss Now · ${companion.context.boss}` : '🎯 Current Story Beat'} achievements={companion.current} ram={effectiveRam} states={achievementStates} />
+                <OverlaySection profile={activeProfile} kind="coming" title="◉ Next Story Beat" achievements={companion.comingUp} ram={effectiveRam} states={achievementStates} />
+                <OverlaySection profile={activeProfile} kind="coming" title="◉ Story / RA context" achievements={fallbackAchievements} ram={effectiveRam} states={achievementStates} />
+                <OverlaySection profile={activeProfile} kind="current" title="◈ Live RAM Opportunity" achievements={deepLiveAchievements} ram={effectiveRam} states={achievementStates} />
                 {!companion.missables.length && !companion.current.length && !companion.comingUp.length && !fallbackAchievements.length && !deepLiveAchievements.length && (
                   <div className="context-clear"><b>All relevant Hardcore achievements cleared</b><span>Nothing open for this context.</span></div>
                 )}
@@ -634,7 +522,7 @@ function Overlay() {
         )}
         <div className="presence-strip">
           <span className={`dot ${gameActive ? 'online' : ''}`} />
-          <span className="presence-text">{gameActive ? (ramLive ? `${overlayStats.location || ramStage || 'Twilight Princess'} · RAM live` : (presenceMessage || `${companion.routeLabel} · route inference active`)) : (snapshot?.dolphin.running ? 'Dolphin open · no game active' : 'No game active')}</span>
+          <span className="presence-text">{gameActive ? (ramLive ? `${overlayStats.location || ramStage || activeProfile?.title || snapshot?.game?.profile || 'Current game'} · RAM live` : (presenceMessage || `${companion.routeLabel} · route inference active`)) : (snapshot?.dolphin.running ? 'Dolphin open · no game active' : 'No game active')}</span>
         </div>
 
         <div className="overlay-footer">
@@ -705,24 +593,23 @@ function App() {
   const locked = achievements.filter((a: any) => !earned(a));
   const unlocked = achievements.filter(earned);
 
-  const liveRamDetectsGame = Boolean(
-    liveRam?.attached &&
-    !liveRam?.stale &&
-    String(liveRam?.gameCode || '') === 'GZ2E01',
-  );
+  const liveRamProfile = getGameProfileForRam(liveRam);
+  const snapshotProfile = getGameProfileByRaGameId(snapshot?.game?.id);
+  const activeProfile = snapshotProfile || liveRamProfile;
+  const liveRamDetectsGame = Boolean(liveRamProfile);
   const gameActive = Boolean(snapshot?.game?.active || liveRamDetectsGame);
   const activeGameId = gameActive
-    ? (Number(snapshot?.game?.id || (liveRamDetectsGame ? 3934 : 0)) || null)
+    ? (Number(snapshot?.game?.id || activeProfile?.raGameId || 0) || null)
     : null;
-  const effectiveRam = liveRamDetectsGame ? liveRam : snapshot?.ram;
+  const effectiveRam = liveRamProfile && (!snapshotProfile || liveRamProfile.key === activeProfile?.key) ? liveRam : snapshot?.ram;
   const ramLive = Boolean(effectiveRam?.attached && !effectiveRam?.stale);
   const serverPresenceMessage = snapshot?.presence?.ok && snapshot?.presence?.currentGameMatches ? snapshot.presence.message : '';
-  const fastRamPresence = ramPresenceMessage(effectiveRam);
+  const fastRamPresence = ramPresenceMessage(effectiveRam, activeProfile);
   const presenceMessage = fastRamPresence || serverPresenceMessage;
   const ramRoom = typeof effectiveRam?.room === 'number' ? effectiveRam.room : null;
-  const sessionStats = useMemo(() => liveSessionStats(effectiveRam), [effectiveRam?.timestamp, effectiveRam?.stageCode, effectiveRam?.currentHearts, effectiveRam?.maxHearts, effectiveRam?.poeSouls, effectiveRam?.goldenBugs, effectiveRam?.faronTears, effectiveRam?.storyFlags]);
+  const sessionStats = useMemo(() => liveSessionStats(effectiveRam, activeProfile), [effectiveRam?.timestamp, effectiveRam?.stageCode, effectiveRam?.currentHearts, effectiveRam?.maxHearts, effectiveRam?.poeSouls, effectiveRam?.goldenBugs, effectiveRam?.faronTears, effectiveRam?.storyFlags]);
 
-  const companion = useMemo(() => buildTwilightContext(achievements, presenceMessage, {
+  const companion = useMemo(() => buildProfileContext(activeProfile, achievements, presenceMessage, {
     live: ramLive,
     stageCode: effectiveRam?.stageCode,
     stageName: effectiveRam?.stageName,
@@ -755,18 +642,18 @@ function App() {
   ]);
 
   const achievementStates = useMemo(
-    () => buildTwilightAchievementStates(achievements, effectiveRam, companion),
+    () => buildProfileAchievementStates(activeProfile, achievements, effectiveRam, companion),
     [achievements, companion, effectiveRam?.timestamp, effectiveRam?.eventBitsHex, effectiveRam?.stateFlags, effectiveRam?.storyFlags, effectiveRam?.actors],
   );
   const broaderCompanion = useMemo(
-    () => buildTwilightContext(achievements, presenceMessage, { live: false }),
+    () => buildProfileContext(activeProfile, achievements, presenceMessage, { live: false }),
     [achievements, presenceMessage],
   );
 
   const liveMissableIds = useMemo(() => new Set(companion.missables.map((a: any) => achievementId(a))), [companion.missables]);
   const comingIds = useMemo(() => new Set(companion.comingUp.map((a: any) => achievementId(a))), [companion.comingUp]);
   const currentIds = useMemo(() => new Set(companion.current.map((a: any) => achievementId(a))), [companion.current]);
-  const allMissables = useMemo(() => achievements.filter((a: any) => Boolean(getTwilightMissableGuide(a))), [achievements]);
+  const allMissables = useMemo(() => achievements.filter((a: any) => Boolean(getAchievementGuide(a, activeGameId))), [achievements]);
 
   function uniqueAchievements(items: any[]) {
     const seen = new Set<string>();
@@ -787,7 +674,7 @@ function App() {
     ...broaderCompanion.current,
     ...broaderCompanion.comingUp,
     ...broaderCompanion.relevantAll,
-  ]).filter((achievement: any) => !earnedHardcore(achievement) && !isMissableAchievement(achievement));
+  ]).filter((achievement: any) => !earnedHardcore(achievement) && !isMissableForProfile(activeProfile, achievement));
 
   const relevantAchievements = uniqueAchievements([
     ...deepLiveAchievements,
@@ -797,7 +684,7 @@ function App() {
     ...(companion.relevantAll.length ? [] : controlledFallbackAchievements),
   ]).slice(0, 5);
 
-  const deepLiveMissables = deepLiveAchievements.filter((achievement: any) => Boolean(getTwilightMissableGuide(achievement)));
+  const deepLiveMissables = deepLiveAchievements.filter((achievement: any) => Boolean(getAchievementGuide(achievement, activeGameId)));
   const whatMattersAchievements = uniqueAchievements([
     ...deepLiveMissables,
     ...companion.missables,
@@ -807,7 +694,7 @@ function App() {
     return Boolean(getTwilightMissableGuide(achievement) && mapped?.coverage === 'deep' && mapped.kind === 'upcoming' && !earnedHardcore(achievement));
   });
   const upcomingMissables = uniqueAchievements([
-    ...companion.comingUp.filter((achievement: any) => Boolean(getTwilightMissableGuide(achievement))),
+    ...companion.comingUp.filter((achievement: any) => Boolean(getAchievementGuide(achievement, activeGameId))),
     ...deepUpcomingMissables,
   ]).filter((achievement: any) => !whatMattersAchievements.some((active: any) => achievementId(active) === achievementId(achievement)));
   const activeMissableCount = whatMattersAchievements.length;
@@ -818,7 +705,7 @@ function App() {
     ...companion.comingUp,
   ]);
 
-  function missableState(achievement: any): TwilightAchievementState {
+  function missableState(achievement: any): GameAchievementState {
     const id = achievementId(achievement);
     const mapped = achievementStates.get(id);
     if (mapped) return mapped;
@@ -827,16 +714,27 @@ function App() {
   }
 
 
-  function isAchievementMissable(achievement: any, gameId?: number | null) {
-    const type = String(achievement?.Type ?? achievement?.type ?? '').trim().toLowerCase();
-    const numericGameId = Number(gameId ?? activeGameId ?? 0);
-    return type === 'missable' || (numericGameId === 3934 && Boolean(getTwilightMissableGuide(achievement)));
+  function getAchievementGuide(achievement: any, gameId?: number | null) {
+    const directProfile = getGameProfileByRaGameId(Number(gameId ?? activeGameId ?? 0));
+    if (directProfile) return getProfileMissableGuide(directProfile, achievement);
+    for (const profile of GAME_PROFILES) {
+      const guide = getProfileMissableGuide(profile, achievement);
+      if (guide) return guide;
+    }
+    return null;
   }
 
-  function achievementListState(achievement: any, gameId?: number | null): TwilightAchievementState {
+  function isAchievementMissable(achievement: any, gameId?: number | null) {
     const numericGameId = Number(gameId ?? activeGameId ?? 0);
+    const profile = getGameProfileByRaGameId(numericGameId);
+    return isMissableForProfile(profile, achievement);
+  }
+
+  function achievementListState(achievement: any, gameId?: number | null): GameAchievementState {
+    const numericGameId = Number(gameId ?? activeGameId ?? 0);
+    const profile = getGameProfileByRaGameId(numericGameId);
     const isCurrent = Boolean(gameActive && activeGameId && numericGameId === Number(activeGameId));
-    if (isCurrent && numericGameId === 3934) return missableState(achievement);
+    if (isCurrent && profile?.enhanced) return missableState(achievement);
     if (earned(achievement)) return { kind: 'completed', label: 'Completed', tone: 'complete', source: 'ra', coverage: 'tracked' };
 
     const measured = achievementCounter(achievement, undefined);
@@ -1027,6 +925,8 @@ function App() {
     libraryRefreshing,
     reloadAchievementLibrary,
     activeGameId,
+    activeProfile,
+    getAchievementGuide,
     isAchievementMissable,
     achievementListState,
     effectiveRam,
@@ -1105,7 +1005,7 @@ function App() {
       </section>
 
       {selectedMissable && (() => {
-        const guide = getTwilightMissableGuide(selectedMissable);
+        const guide = getAchievementGuide(selectedMissable);
         const state = missableState(selectedMissable);
         return (
           <div className="v5-modal-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setSelectedMissable(null); }}>

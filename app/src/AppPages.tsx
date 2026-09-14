@@ -1,5 +1,4 @@
 import React from 'react';
-import { getTwilightMissableGuide } from './profiles/twilightPrincessGuide';
 
 function achievementId(achievement: any) {
   return String(achievement?.ID ?? achievement?.id ?? achievement?.Title ?? achievement?.title ?? '');
@@ -21,6 +20,7 @@ function useAppView() {
 export function AchievementRow({ achievement, compact = false, gameId = null }: { achievement: any; compact?: boolean; gameId?: number | null }) {
   const {
     achievementListState,
+    getAchievementGuide,
     effectiveRam,
     activeGameId,
     achievementCounter,
@@ -31,7 +31,7 @@ export function AchievementRow({ achievement, compact = false, gameId = null }: 
   const isCurrentGame = !gameId || Number(gameId) === Number(activeGameId);
   const counter = state.progress || achievementCounter(achievement, isCurrentGame ? effectiveRam : undefined);
   const missable = isAchievementMissable(achievement, gameId);
-  const hasGuide = Number(gameId ?? activeGameId ?? 0) === 3934 && Boolean(getTwilightMissableGuide(achievement));
+  const hasGuide = Boolean(getAchievementGuide(achievement, gameId));
   const openGuide = () => { if (hasGuide) setSelectedMissable(achievement); };
   return (
     <div
@@ -53,8 +53,8 @@ export function AchievementRow({ achievement, compact = false, gameId = null }: 
 }
 
 export function MissableRow({ achievement }: { achievement: any }) {
-  const { missableState, setSelectedMissable } = useAppView();
-  const guide = getTwilightMissableGuide(achievement);
+  const { missableState, setSelectedMissable, getAchievementGuide } = useAppView();
+  const guide = getAchievementGuide(achievement);
   const state = missableState(achievement);
   return (
     <button type="button" className={`v5-missable-row ${state.tone}`} onClick={() => setSelectedMissable(achievement)}>
@@ -143,6 +143,7 @@ export function UpdateCard({ full = false }: { full?: boolean }) {
 export function Dashboard() {
   const {
     gameActive,
+    activeProfile,
     data,
     snapshot,
     effectiveRam,
@@ -157,7 +158,7 @@ export function Dashboard() {
     setPage,
     refresh,
   } = useAppView();
-  const heroTitle = gameActive ? (data?.Title || snapshot?.game?.profile || 'The Legend of Zelda: Twilight Princess') : 'No supported game detected';
+  const heroTitle = gameActive ? (data?.Title || snapshot?.game?.profile || activeProfile?.title || 'Current game') : 'No supported game detected';
   const formLabel = effectiveRam?.linkForm === 'wolf' ? 'Wolf Link' : effectiveRam?.linkForm === 'human' ? 'Human Link' : 'Unknown';
   const contextLabel = companion.context.label || effectiveRam?.stageName || effectiveRam?.stageCode || 'Waiting for live context';
   const riskLabel = activeMissableCount ? `${activeMissableCount} missable${activeMissableCount === 1 ? '' : 's'} active` : 'No urgent missables';
@@ -175,7 +176,7 @@ export function Dashboard() {
             {gameImageUrl ? <img className="v5-game-icon" src={gameImageUrl} alt="" /> : <div className="v5-game-icon placeholder">RA</div>}
             <div className="v5-hero-copy">
               <h2>{heroTitle}</h2>
-              <p>{gameActive ? 'GameCube · Hardcore achievement tracking' : 'Start Dolphin with Twilight Princess and RA Companion will attach automatically.'}</p>
+              <p>{gameActive ? `${activeProfile?.platform || snapshot?.game?.platform || 'Game'} · Hardcore achievement tracking` : 'Start Dolphin with a supported game and RA Companion will attach automatically.'}</p>
               <div className="v5-context-grid v6-session-grid">
                 <span>Current form <b>{gameActive ? formLabel : '—'}</b></span>
                 <span>Area / context <b>{gameActive ? contextLabel : '—'}</b></span>
@@ -205,7 +206,7 @@ export function Dashboard() {
           <div className="v5-missable-list">
             {whatMattersAchievements.slice(0, 3).map((achievement: any) => <MissableRow key={achievementId(achievement)} achievement={achievement} />)}
             {!whatMattersAchievements.length && upcomingMissables.slice(0, 3).map((achievement: any) => <MissableRow key={achievementId(achievement)} achievement={achievement} />)}
-            {!gameActive && <div className="v5-empty-state"><b>Waiting for a game session</b><span>Launch Twilight Princess in Dolphin. This panel will update automatically when live context becomes available.</span></div>}
+            {!gameActive && <div className="v5-empty-state"><b>Waiting for a game session</b><span>Launch a supported game in Dolphin. This panel will update automatically when live context becomes available.</span></div>}
             {gameActive && !whatMattersAchievements.length && !upcomingMissables.length && <div className="v5-clear-state"><b>Nothing urgent right now</b><span>RA Companion is watching the current story beat and will surface missables here when they become relevant.</span></div>}
           </div>
         </article>
@@ -226,7 +227,7 @@ export function Dashboard() {
           <div className="v5-health-grid">
             <div><span>▣</span><b>{snapshot?.dolphin.running ? 'Dolphin is connected' : 'Dolphin is waiting'}</b><small>{snapshot?.dolphin.running ? 'Emulator ready' : 'Start Dolphin to begin'}</small></div>
             <div><span>▥</span><b>{ramLive ? 'Live tracking active' : 'Live tracking idle'}</b><small>{ramLive ? 'Reading game context' : 'Starts with a supported game'}</small></div>
-            <div><span>▤</span><b>{gameActive ? 'Game profile loaded' : 'No game profile'}</b><small>{gameActive ? 'Twilight Princess (GC · USA)' : 'Waiting for supported game'}</small></div>
+            <div><span>▤</span><b>{gameActive ? 'Game profile loaded' : 'No game profile'}</b><small>{gameActive ? `${activeProfile?.title || snapshot?.game?.profile || 'Current game'}${activeProfile?.region ? ` · ${activeProfile.region}` : ''}` : 'Waiting for supported game'}</small></div>
           </div>
         </article>
         <UpdateCard />
@@ -238,6 +239,7 @@ export function Dashboard() {
 export function CurrentGamePage() {
   const {
     gameActive,
+    activeProfile,
     data,
     snapshot,
     progress,
@@ -256,7 +258,7 @@ export function CurrentGamePage() {
         <div className="v5-page-stack">
           <article className="v5-panel">
             <div className="v5-section-label">SESSION</div>
-            <h2>{gameActive ? (data?.Title || snapshot?.game?.profile || 'Twilight Princess') : 'No game active'}</h2>
+            <h2>{gameActive ? (data?.Title || snapshot?.game?.profile || activeProfile?.title || 'Current game') : 'No game active'}</h2>
             <div className="v5-big-progress"><div><b>{gameActive ? `${progress.pct}%` : '—'}</b><span>Hardcore completion</span></div><div className="v5-progress-track"><i style={{ width: `${gameActive ? progress.pct : 0}%` }} /></div><small>{gameActive ? `${progress.unlocked} / ${progress.total || 149} achievements unlocked` : 'Start a supported session to begin tracking.'}</small></div>
           </article>
           <article className="v5-panel">
