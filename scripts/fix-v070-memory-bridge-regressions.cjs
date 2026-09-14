@@ -3,6 +3,8 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 
+// This migration is intentionally idempotent: CI runs it before every validation
+// build until the validated renderer/profile changes are promoted to source.
 function patchFile(filePath, broken, fixed, label) {
   let source = fs.readFileSync(filePath, 'utf8');
   if (source.includes(broken)) {
