@@ -53,8 +53,8 @@ describe('v0.7 native rcheevos runtime helper', () => {
 
   it('has a real-Dolphin measured probe that compares rcheevos with the native memory read', () => {
     expect(observerScript).toContain("$probeDefinition = 'M:0xH0040AFC0>=255'");
-    expect(observerScript).toContain("command = 'evaluateFrame'");
-    expect(observerScript).toContain("command = 'achievementStatus'");
+    expect(observerScript).toContain('$frame1Json = \'{"id":4,"command":"evaluateFrame"}\'');
+    expect(observerScript).toContain('$statusJson = \'{"id":6,"command":"achievementStatus","achievementId":700000001}\'');
     expect(observerScript).toContain('$status.measuredValue -eq $expectedByte');
     expect(observerScript).toContain('No official achievement state was changed.');
   });
