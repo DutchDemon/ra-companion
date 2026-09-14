@@ -374,6 +374,7 @@ function createRaRuntimeDataService({
     const observer = await observerRuntime.loadGame({
       gameId: data.id,
       gameCode,
+      richPresenceScript: data.richPresenceScript,
       achievements: coreAchievements.map((achievement) => ({
         achievementId: achievement.id,
         definition: achievement.definition,
