@@ -54,8 +54,9 @@ function firstFiniteNumber(...values: any[]) {
 }
 
 function explicitTargetFromText(text: string, nounPattern: RegExp) {
-  const match = text.match(new RegExp(`(?:collect|find|obtain|have|get|all)\\s+(?:all\\s+)?(\\d+)\\s+${nounPattern.source}`, 'i'))
-    || text.match(new RegExp(`(\\d+)\\s+${nounPattern.source}`, 'i'));
+  const noun = `(?:${nounPattern.source})`;
+  const match = text.match(new RegExp(`(?:collect|find|obtain|have|get|all)\\s+(?:all\\s+)?(\\d+)\\s+${noun}`, 'i'))
+    || text.match(new RegExp(`(\\d+)\\s+${noun}`, 'i'));
   if (!match) return null;
   const value = Number(match[1]);
   return Number.isFinite(value) && value > 0 ? value : null;
