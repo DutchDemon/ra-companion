@@ -27,7 +27,8 @@ describe('v0.7 native rcheevos runtime helper', () => {
 
   it('uses a versioned JSON-line protocol instead of coupling Electron to C structs', () => {
     expect(helper).toContain('#define RA_RUNTIME_PROTOCOL_VERSION 1');
-    expect(helper).toContain('"type\\\":\\\"ready"');
+    expect(helper).toContain('static void write_ready(void)');
+    expect(helper).toContain('runtimeInitialized');
     expect(helper).toContain('strcmp(command, "ping")');
     expect(helper).toContain('strcmp(command, "status")');
     expect(helper).toContain('strcmp(command, "reset")');
