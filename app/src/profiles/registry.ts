@@ -182,6 +182,8 @@ function twilightRamCounter(achievement: any, ram?: Snapshot['ram']): Achievemen
   return null;
 }
 
+const TWILIGHT_PRINCESS_GAME_CODES: readonly string[] = Object.freeze(['GZ2E01']);
+
 export const TWILIGHT_PRINCESS_PROFILE: RendererGameProfile = Object.freeze({
   key: 'twilight-princess-gc-us',
   raGameId: 3934,
@@ -189,9 +191,9 @@ export const TWILIGHT_PRINCESS_PROFILE: RendererGameProfile = Object.freeze({
   platform: 'GameCube',
   region: 'USA',
   enhanced: true,
-  gameCodes: Object.freeze(['GZ2E01']),
+  gameCodes: TWILIGHT_PRINCESS_GAME_CODES,
   matchesRam(ram) {
-    return Boolean(ram?.attached && !ram?.stale && this.gameCodes.includes(String(ram?.gameCode || '').trim()));
+    return Boolean(ram?.attached && !ram?.stale && TWILIGHT_PRINCESS_GAME_CODES.includes(String(ram?.gameCode || '').trim()));
   },
   buildContext: buildTwilightContext,
   buildAchievementStates: buildTwilightAchievementStates,
