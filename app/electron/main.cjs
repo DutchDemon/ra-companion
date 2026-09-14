@@ -5,6 +5,7 @@ const { execFile, spawn } = require('child_process');
 const { createUpdateService } = require('./services/update-service.cjs');
 const { createConfigService } = require('./services/config-service.cjs');
 const { createAchievementLibraryService } = require('./services/achievement-library-service.cjs');
+const { createRuntimeHelperService } = require('./services/runtime-helper-service.cjs');
 const { registerIpcHandlers } = require('./ipc/register.cjs');
 const { detectProfileFromWindowTitle, resolveGameProfile, publicGameDescriptor } = require('./game-profiles/registry.cjs');
 
@@ -117,6 +118,12 @@ const {
   getMainWindow: () => mainWindow,
   getRaProgress: (...args) => getRaProgress(...args),
 });
+
+const {
+  start: startRuntimeHelper,
+  stop: stopRuntimeHelper,
+  getStatus: getRuntimeHelperStatus,
+} = createRuntimeHelperService({ app });
 
 function publicShortcutState() {
   return JSON.parse(JSON.stringify(shortcutState));
@@ -1210,6 +1217,7 @@ app.whenReady().then(() => {
     refreshLibrary: refreshAchievementLibrary,
     getSnapshot,
     getRamSnapshot,
+    getRuntimeStatus: getRuntimeHelperStatus,
     toggleOverlay,
     getOverlayState,
     updateOverlaySettings,
@@ -1227,6 +1235,7 @@ app.whenReady().then(() => {
 
   createMainWindow();
   createOverlayWindow();
+  startRuntimeHelper();
 
   registerGlobalShortcuts();
   if (shortcutHealthTimer) clearInterval(shortcutHealthTimer);
@@ -1244,6 +1253,7 @@ app.on('before-quit', () => {
   appIsQuitting = true;
 });
 app.on('will-quit', () => {
+  stopRuntimeHelper();
   stopRamReader('Application closed.');
   if (shortcutHealthTimer) clearInterval(shortcutHealthTimer);
   shortcutHealthTimer = null;

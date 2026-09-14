@@ -81,6 +81,18 @@ declare global {
     error?: string;
   }
 
+  interface RuntimeHelperStatus {
+    supportedPlatform: boolean;
+    available: boolean;
+    running: boolean;
+    ready: boolean;
+    protocolVersion: number | null;
+    rcheevosVersion: string;
+    rcheevosTag: string;
+    pid: number | null;
+    lastError: string;
+  }
+
   interface Window {
     raCompanion: {
       getAppVersion: () => Promise<string>;
@@ -96,6 +108,7 @@ declare global {
       onAchievementLibraryChanged: (callback: (library: AchievementLibrary) => void) => () => void;
       getSnapshot: (forceRa?: boolean) => Promise<Snapshot>;
       getRamState: () => Promise<Snapshot['ram']>;
+      getRuntimeStatus: () => Promise<RuntimeHelperStatus>;
       onRamStateChanged: (callback: (state: Snapshot['ram']) => void) => () => void;
       toggleOverlay: (force?: boolean) => Promise<boolean>;
       getOverlayState: () => Promise<OverlayState>;

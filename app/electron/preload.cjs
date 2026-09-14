@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('raCompanion', {
   },
   getSnapshot: (forceRa = false) => ipcRenderer.invoke('snapshot:get', forceRa),
   getRamState: () => ipcRenderer.invoke('ram:get'),
+  getRuntimeStatus: () => ipcRenderer.invoke('runtime:status'),
   onRamStateChanged: (callback) => {
     const handler = (_event, state) => callback(state);
     ipcRenderer.on('ram:state-changed', handler);
