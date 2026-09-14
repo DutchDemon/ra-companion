@@ -6,6 +6,7 @@ const { createUpdateService } = require('./services/update-service.cjs');
 const { createConfigService } = require('./services/config-service.cjs');
 const { createAchievementLibraryService } = require('./services/achievement-library-service.cjs');
 const { registerIpcHandlers } = require('./ipc/register.cjs');
+const { detectProfileFromWindowTitle, resolveGameProfile, publicGameDescriptor } = require('./game-profiles/registry.cjs');
 
 // Keep settings in the same location used by the development/portable builds.
 app.setPath('userData', path.join(app.getPath('appData'), 'ra-companion'));
@@ -24,7 +25,6 @@ function getNativePowerShellPath() {
   return path.join(windowsDir, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 }
 
-const TWILIGHT_PRINCESS_GAME_ID = 3934;
 const OVERLAY_GAP = 24;
 const OVERLAY_SIZES = {
   compact: { width: 420, height: 360 },
@@ -581,14 +581,15 @@ function detectDolphin() {
       try {
         const data = JSON.parse(stdout.trim());
         const title = data.title || '';
-        const isTwilightPrincess = /twilight\s+princess/i.test(title);
+        const detectedProfile = detectProfileFromWindowTitle(title);
         resolve({
           running: true,
           supportedPlatform: true,
           title,
           pid: data.id || null,
           processName: data.processName || 'Dolphin',
-          detectedGameId: isTwilightPrincess ? TWILIGHT_PRINCESS_GAME_ID : null,
+          detectedGameId: detectedProfile?.raGameId ?? null,
+          detectedProfileKey: detectedProfile?.key ?? null,
         });
       } catch {
         resolve({ running: true, supportedPlatform: true, title: '', pid: null, detectedGameId: null });
@@ -762,7 +763,7 @@ function getRamSnapshot() {
   };
 }
 
-async function getRaProgress(gameId = TWILIGHT_PRINCESS_GAME_ID, force = false) {
+async function getRaProgress(gameId, force = false) {
   const config = readConfig();
   if (!config.username || !config.apiKey) {
     return { ok: false, needsConfig: true, error: 'RetroAchievements username/API key missing.' };
@@ -1015,13 +1016,10 @@ async function getSnapshot(forceRa = false) {
   ensureRamReader(dolphin);
   const ram = getRamSnapshot();
 
-  const ramDetectsTwilightPrincess = Boolean(
-    ram?.attached &&
-    !ram?.stale &&
-    String(ram?.gameCode || '') === 'GZ2E01',
-  );
-  const gameId = dolphin.detectedGameId || (ramDetectsTwilightPrincess ? TWILIGHT_PRINCESS_GAME_ID : null);
-  const gameActive = Boolean(dolphin.running && gameId);
+  const detection = resolveGameProfile({ dolphin, ram });
+  const activeProfile = detection.profile;
+  const gameId = activeProfile?.raGameId ?? null;
+  const gameActive = Boolean(dolphin.running && activeProfile);
 
   // Never keep presenting cached context after the emulator/game closes.
   if (!gameActive) {
@@ -1029,42 +1027,14 @@ async function getSnapshot(forceRa = false) {
       timestamp: Date.now(),
       dolphin,
       ram,
-      game: {
-        id: null,
-        profile: 'No game active',
-        autoDetected: false,
-        active: false,
-      },
+      game: publicGameDescriptor(null),
       progress: { ok: false, inactive: true, error: 'No supported game is currently active.' },
       recent: { ok: false, count: 0 },
       presence: { ok: false, inactive: true, error: 'No game active.', message: '', lastGameId: null, currentGameMatches: false, source: 'none' },
     };
   }
 
-  const ramContextMarker = ram?.kind === 'dungeon' ? '🏰' : ram?.kind === 'area' ? '🗺️' : ram?.kind === 'building' ? '🏠' : ram?.kind === 'cave' ? '🕳️' : '';
-  const ramStageCode = String(ram?.stageCode || '').trim();
-  const ramFormMarker = ram?.linkForm === 'wolf' ? '🐺Link' : ram?.linkForm === 'human' ? '🧝Link' : '';
-  const ramHeartPart = typeof ram?.currentHearts === 'number' && typeof ram?.maxHearts === 'number'
-    ? `❤️${ram.currentHearts}/${ram.maxHearts}`
-    : '';
-  const ramFaronTears = ['F_SP108', 'R_SP108', 'D_SB10'].includes(ramStageCode)
-    && ram?.storyFlags?.faronVesselObtained === true
-    && typeof ram?.faronTears === 'number'
-      ? `💧${Math.max(0, Math.min(16, ram.faronTears))}/16 Tears`
-      : '';
-  const ramPresenceMessage = ramDetectsTwilightPrincess && ram?.mapped && ramContextMarker
-    ? [
-        ramFormMarker,
-        `${ramContextMarker}${String(ram.stageName || ram.stageCode || '').trim()}${ram?.boss ? ` ☠️${String(ram.boss).trim()}` : ''}`,
-        ramHeartPart,
-        typeof ram?.fusedShadows === 'number' ? `👥${ram.fusedShadows}/4` : '',
-        typeof ram?.mirrorShards === 'number' ? `🧿${ram.mirrorShards}/4` : '',
-        typeof ram?.poeSouls === 'number' ? `👻${ram.poeSouls}/60` : '',
-        typeof ram?.goldenBugs === 'number' ? `🐜${ram.goldenBugs}/24` : '',
-        typeof ram?.gameOvers === 'number' ? `💀${ram.gameOvers}` : '',
-        ramFaronTears,
-      ].filter(Boolean).join(' ')
-    : '';
+  const ramPresenceMessage = activeProfile?.buildRamPresence?.(ram) || '';
   const hasLiveRamContext = Boolean(ramPresenceMessage);
   const [baseProgress, recent, profile] = await Promise.all([
     getRaProgress(gameId, forceRa),
@@ -1105,12 +1075,7 @@ async function getSnapshot(forceRa = false) {
     timestamp: Date.now(),
     dolphin,
     ram,
-    game: {
-      id: gameId,
-      profile: gameId === TWILIGHT_PRINCESS_GAME_ID ? 'The Legend of Zelda: Twilight Princess' : 'Unknown game',
-      autoDetected: Boolean(dolphin.detectedGameId || ramDetectsTwilightPrincess),
-      active: true,
-    },
+    game: publicGameDescriptor(activeProfile, detection.source),
     progress,
     recent: { ok: Boolean(recent?.ok), count: Array.isArray(recent?.data) ? recent.data.length : 0 },
     presence,
