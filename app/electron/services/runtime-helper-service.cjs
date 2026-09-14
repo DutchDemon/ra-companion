@@ -16,6 +16,9 @@ function createRuntimeHelperService({ app }) {
     protocolVersion: null,
     rcheevosVersion: '',
     rcheevosTag: '',
+    gameCubeMemoryBridge: false,
+    dolphinAttached: false,
+    dolphinPid: null,
     pid: null,
     lastError: '',
   };
@@ -48,12 +51,29 @@ function createRuntimeHelperService({ app }) {
         protocolVersion: Number(message.protocolVersion || 0) || null,
         rcheevosVersion: String(message.rcheevosVersion || ''),
         rcheevosTag: String(message.rcheevosTag || ''),
+        gameCubeMemoryBridge: Boolean(message.gameCubeMemoryBridge),
         lastError: '',
       };
       return;
     }
 
     if (message.type === 'response') {
+      if (message.command === 'attachDolphin' && message.ok !== false) {
+        state = {
+          ...state,
+          dolphinAttached: Boolean(message.attached),
+          dolphinPid: Number(message.pid || 0) || null,
+        };
+      } else if (message.command === 'detachDolphin' && message.ok !== false) {
+        state = { ...state, dolphinAttached: false, dolphinPid: null };
+      } else if (message.command === 'memoryStatus' && message.ok !== false) {
+        state = {
+          ...state,
+          dolphinAttached: Boolean(message.attached),
+          dolphinPid: Number(message.pid || 0) || null,
+        };
+      }
+
       const id = Number(message.id || 0);
       const entry = pending.get(id);
       if (!entry) return;
@@ -96,7 +116,16 @@ function createRuntimeHelperService({ app }) {
 
     stdoutBuffer = '';
     stderrBuffer = '';
-    state = { ...state, available: true, running: false, ready: false, pid: null, lastError: '' };
+    state = {
+      ...state,
+      available: true,
+      running: false,
+      ready: false,
+      dolphinAttached: false,
+      dolphinPid: null,
+      pid: null,
+      lastError: '',
+    };
 
     try {
       const spawned = spawn(executable, [], {
@@ -121,6 +150,8 @@ function createRuntimeHelperService({ app }) {
           ...state,
           running: false,
           ready: false,
+          dolphinAttached: false,
+          dolphinPid: null,
           pid: null,
           lastError: error?.message || 'Could not start runtime helper.',
         };
@@ -135,6 +166,8 @@ function createRuntimeHelperService({ app }) {
           ...state,
           running: false,
           ready: false,
+          dolphinAttached: false,
+          dolphinPid: null,
           pid: null,
           lastError: expected ? state.lastError : `Runtime helper exited (${code ?? signal ?? 'unknown'}).`,
         };
@@ -146,6 +179,8 @@ function createRuntimeHelperService({ app }) {
         ...state,
         running: false,
         ready: false,
+        dolphinAttached: false,
+        dolphinPid: null,
         pid: null,
         lastError: error?.message || 'Could not start runtime helper.',
       };
@@ -154,7 +189,13 @@ function createRuntimeHelperService({ app }) {
     return publicStatus();
   }
 
-  function request(command, timeoutMs = 2500) {
+  function request(command, payload = {}, timeoutMs = 2500) {
+    if (typeof payload === 'number') {
+      timeoutMs = payload;
+      payload = {};
+    }
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) payload = {};
+
     start();
     if (!child || child.killed || !child.stdin?.writable) {
       return Promise.reject(new Error(state.lastError || 'Runtime helper is not running.'));
@@ -172,7 +213,7 @@ function createRuntimeHelperService({ app }) {
         reject: (error) => { clearTimeout(timer); reject(error); },
       });
 
-      child.stdin.write(`${JSON.stringify({ id, command })}\n`, (error) => {
+      child.stdin.write(`${JSON.stringify({ id, command, ...payload })}\n`, (error) => {
         if (!error) return;
         const entry = pending.get(id);
         if (!entry) return;
@@ -180,6 +221,28 @@ function createRuntimeHelperService({ app }) {
         entry.reject(error);
       });
     });
+  }
+
+  function attachDolphin(pid) {
+    const normalizedPid = Number(pid || 0);
+    if (!Number.isInteger(normalizedPid) || normalizedPid <= 0) {
+      return Promise.reject(new Error('A valid Dolphin process ID is required.'));
+    }
+    if (state.dolphinAttached && state.dolphinPid === normalizedPid) return request('memoryStatus');
+    return request('attachDolphin', { pid: normalizedPid });
+  }
+
+  function detachDolphin() {
+    if (!state.dolphinAttached) return Promise.resolve({ ok: true, attached: false });
+    return request('detachDolphin');
+  }
+
+  function getMemoryStatus() {
+    return request('memoryStatus');
+  }
+
+  function readMemory(address, numBytes) {
+    return request('readMemory', { address: Number(address), numBytes: Number(numBytes) });
   }
 
   function stop() {
@@ -204,6 +267,10 @@ function createRuntimeHelperService({ app }) {
     start,
     stop,
     request,
+    attachDolphin,
+    detachDolphin,
+    getMemoryStatus,
+    readMemory,
     getStatus: publicStatus,
     getHelperPath: helperPath,
   };
