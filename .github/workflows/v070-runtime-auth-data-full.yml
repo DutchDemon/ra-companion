@@ -1,0 +1,220 @@
+name: v0.7 Runtime Auth Full Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/v0.7.0-runtime-auth-data]
+    paths:
+      - '.github/workflows/v070-runtime-auth-data-full.yml'
+      - 'app/**'
+      - 'native/rcheevos-runtime-helper/**'
+      - 'scripts/build-runtime-helper.ps1'
+      - 'scripts/test-ra-runtime-data-service.cjs'
+      - 'scripts/test-observer-runtime-service.cjs'
+      - 'scripts/test-observer-runtime-integration.cjs'
+
+concurrency:
+  group: v070-runtime-auth-data-full-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VALIDATION_VERSION: 0.7.0-dev.4
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate runtime auth/data service boundaries
+        shell: pwsh
+        run: |
+          node --check app/electron/services/ra-runtime-data-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'RA runtime data service syntax check failed.' }
+          node --check app/electron/services/observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer runtime service syntax check failed.' }
+          node --check app/electron/services/runtime-helper-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper service syntax check failed.' }
+          node --check app/electron/main.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Electron main syntax check failed.' }
+          node --check app/electron/ipc/register.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'IPC syntax check failed.' }
+          node --check app/electron/preload.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Preload syntax check failed.' }
+          node scripts/test-ra-runtime-data-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'RA runtime data service tests failed.' }
+          node scripts/test-observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer runtime service tests failed.' }
+
+      - name: Guard observer-only RA network surface
+        shell: pwsh
+        run: |
+          $service = Get-Content 'app/electron/services/ra-runtime-data-service.cjs' -Raw
+          foreach ($forbidden in @("r: 'startsession'", "r: 'ping'", "r: 'awardachievement'", "r: 'submitlbentry'")) {
+            if ($service.Contains($forbidden)) { throw "Forbidden runtime endpoint found: $forbidden" }
+          }
+          foreach ($required in @("r: 'login2'", "r: 'patch'", 'safeStorage.encryptString(normalizedToken)', "officialCompletionAuthority: 'retroachievements-server'")) {
+            if (-not $service.Contains($required)) { throw "Required runtime safety/data contract is missing: $required" }
+          }
+          $main = Get-Content 'app/electron/main.cjs' -Raw
+          if (-not $main.Contains('const progress = baseProgress;')) { throw 'Official RA progress authority invariant is missing.' }
+          if ($main.Contains('runtimeProgress =')) { throw 'Local runtime must not replace official RA progress.' }
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Strict app type, regression and production checks
+        working-directory: app
+        shell: pwsh
+        run: |
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript typecheck failed.' }
+          npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed.' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Production build failed.' }
+
+      - name: Build pinned rcheevos helper
+        shell: pwsh
+        run: |
+          ./scripts/build-runtime-helper.ps1 -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper build failed.' }
+
+      - name: Validate native observer path
+        shell: pwsh
+        run: |
+          node scripts/test-observer-runtime-integration.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer/native definition-loader integration failed.' }
+          $helper = (Resolve-Path 'app/tools/ra-runtime-helper.exe').Path
+          $raw = & $helper --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper self-test failed.' }
+          $self = $raw | ConvertFrom-Json
+          if (-not $self.ok -or -not $self.runtimeParser -or -not $self.gameCubeMemoryMapping -or -not $self.observerRuntime -or -not $self.readOnlyBridge) {
+            throw 'Runtime helper self-test reported an invalid observer capability.'
+          }
+          if ($self.rcheevosTag -ne 'v12.5.0') { throw "Unexpected rcheevos tag: $($self.rcheevosTag)" }
+          $raw | Set-Content 'runtime-auth-full-self-test.txt'
+
+      - name: Stamp validation build version
+        working-directory: app
+        shell: pwsh
+        run: |
+          node -e "const fs=require('fs');const p=require('./package.json');p.version=process.env.VALIDATION_VERSION;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($pkg.version -ne $env:VALIDATION_VERSION) { throw 'Validation version stamp failed.' }
+
+      - name: Build NSIS runtime-auth validation installer
+        working-directory: app
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npx electron-builder --win nsis --x64 --publish never
+          if ($LASTEXITCODE -ne 0) { throw 'electron-builder failed.' }
+
+      - name: Verify packaged runtime-auth layer and Defender scan
+        shell: pwsh
+        run: |
+          $packagedRoot = 'app/release/win-unpacked/resources/app'
+          $packagedHelper = Join-Path $packagedRoot 'tools/ra-runtime-helper.exe'
+          $packagedHelperService = Join-Path $packagedRoot 'electron/services/runtime-helper-service.cjs'
+          $packagedObserverService = Join-Path $packagedRoot 'electron/services/observer-runtime-service.cjs'
+          $packagedRuntimeDataService = Join-Path $packagedRoot 'electron/services/ra-runtime-data-service.cjs'
+          $packagedMain = Join-Path $packagedRoot 'electron/main.cjs'
+          $packagedPreload = Join-Path $packagedRoot 'electron/preload.cjs'
+          foreach ($required in @($packagedHelper, $packagedHelperService, $packagedObserverService, $packagedRuntimeDataService, $packagedMain, $packagedPreload)) {
+            if (-not (Test-Path $required)) { throw "Packaged app is missing runtime-auth file: $required" }
+          }
+
+          foreach ($script in @($packagedHelperService, $packagedObserverService, $packagedRuntimeDataService, $packagedMain, $packagedPreload)) {
+            node --check $script
+            if ($LASTEXITCODE -ne 0) { throw "Packaged JavaScript syntax check failed: $script" }
+          }
+
+          $packagedServiceText = Get-Content $packagedRuntimeDataService -Raw
+          foreach ($forbidden in @("r: 'startsession'", "r: 'ping'", "r: 'awardachievement'", "r: 'submitlbentry'")) {
+            if ($packagedServiceText.Contains($forbidden)) { throw "Packaged service contains forbidden endpoint: $forbidden" }
+          }
+          if (-not $packagedServiceText.Contains("r: 'login2'")) { throw 'Packaged service is missing login2.' }
+          if (-not $packagedServiceText.Contains("r: 'patch'")) { throw 'Packaged service is missing patch fetch.' }
+
+          $raw = & $packagedHelper --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged runtime helper self-test failed.' }
+          $self = $raw | ConvertFrom-Json
+          if (-not $self.ok -or -not $self.observerRuntime -or -not $self.readOnlyBridge) {
+            throw 'Packaged helper does not expose the validated observer runtime.'
+          }
+
+          $packagedPackage = Get-Content (Join-Path $packagedRoot 'package.json') -Raw | ConvertFrom-Json
+          if ($packagedPackage.version -ne $env:VALIDATION_VERSION) {
+            throw "Packaged app version is $($packagedPackage.version), expected $env:VALIDATION_VERSION."
+          }
+
+          $expectedInstallerName = "RA Companion Setup $env:VALIDATION_VERSION.exe"
+          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq $expectedInstallerName } | Select-Object -First 1
+          if (-not $installer) { throw "NSIS validation installer was not generated: $expectedInstallerName" }
+
+          $report = 'app/release/runtime-auth-defender-scan.txt'
+          "Installer: $($installer.FullName)" | Set-Content $report
+          "Helper: $((Resolve-Path $packagedHelper).Path)" | Add-Content $report
+          "RuntimeDataService: $((Resolve-Path $packagedRuntimeDataService).Path)" | Add-Content $report
+          $status = Get-MpComputerStatus -ErrorAction Stop
+          "AntivirusEnabled: $($status.AntivirusEnabled)" | Add-Content $report
+          "AntivirusSignatureVersion: $($status.AntivirusSignatureVersion)" | Add-Content $report
+          if ($status.AntivirusEnabled) {
+            Start-MpScan -ScanType CustomScan -ScanPath $installer.FullName -ErrorAction Stop
+            Start-MpScan -ScanType CustomScan -ScanPath (Resolve-Path $packagedHelper).Path -ErrorAction Stop
+            Start-Sleep -Seconds 2
+            $hits = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
+              ($_.Resources -join ';') -like "*$($installer.Name)*" -or ($_.Resources -join ';') -like '*ra-runtime-helper.exe*'
+            })
+            if ($hits.Count -gt 0) { throw 'Microsoft Defender detected a runtime-auth validation artifact.' }
+          }
+          'RESULT: NO DETECTION' | Add-Content $report
+
+          Get-FileHash $installer.FullName -Algorithm SHA256 | Format-List | Out-String | Add-Content 'app/release/runtime-auth-checksums.txt'
+          Get-FileHash (Resolve-Path $packagedHelper).Path -Algorithm SHA256 | Format-List | Out-String | Add-Content 'app/release/runtime-auth-checksums.txt'
+
+      - name: Upload full runtime-auth validation build
+        uses: actions/upload-artifact@v4
+        with:
+          name: v070-runtime-auth-data-full-validation
+          if-no-files-found: error
+          path: |
+            app/release/RA Companion Setup 0.7.0-dev.4.exe
+            app/release/RA Companion Setup 0.7.0-dev.4.exe.blockmap
+            app/release/latest.yml
+            app/release/runtime-auth-defender-scan.txt
+            app/release/runtime-auth-checksums.txt
+            app/tools/ra-runtime-helper.exe
+            runtime-auth-full-self-test.txt
+
+  clamav:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: v070-runtime-auth-data-full-validation
+          path: artifact
+      - name: ClamAV scan
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clamav clamav-freshclam
+          sudo systemctl stop clamav-freshclam.service || true
+          sudo pkill -x freshclam || true
+          sudo freshclam
+          INSTALLER=$(find artifact -type f -name 'RA Companion Setup 0.7.0-dev.4.exe' -print -quit)
+          HELPER=$(find artifact -type f -name 'ra-runtime-helper.exe' -print -quit)
+          test -n "$INSTALLER"
+          test -n "$HELPER"
+          clamscan "$INSTALLER" "$HELPER" | tee artifact/clamav-scan.txt
+          test ${PIPESTATUS[0]} -eq 0
