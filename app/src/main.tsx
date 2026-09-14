@@ -18,6 +18,7 @@ import {
   type GameAchievementState,
   type RendererGameProfile,
 } from './profiles/registry';
+import { findPendingFaronVesselObjective, pendingFaronVesselState } from './profiles/faronNextStep';
 import { AppViewContext, Dashboard, CurrentGamePage, AchievementsPage, OverlayPage, SettingsPage, UpdateBanner, UpdateCard } from './AppPages';
 
 function achievementArray(data: any) {
@@ -230,50 +231,6 @@ function achievementCounter(achievement: any, ram?: Snapshot['ram'], profile: Re
   return achievementCounterForProfile(profile, achievement, ram, runtimeLive);
 }
 
-type LiveAchievementCounterItem = { achievement: any; counter: AchievementCounter };
-
-function normalizeCounterContext(value: unknown) {
-  return String(value ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function selectLiveAchievementCounters(
-  achievements: any[],
-  counterFor: (achievement: any) => AchievementCounter | null,
-  relevantIds: Set<string>,
-  contextLabel: string,
-  limit = 4,
-): LiveAchievementCounterItem[] {
-  const context = normalizeCounterContext(contextLabel);
-  return achievements
-    .filter((achievement) => !earnedHardcore(achievement))
-    .map((achievement) => {
-      const counter = counterFor(achievement);
-      if (!counter || counter.target <= 0) return null;
-      const id = achievementId(achievement);
-      const text = normalizeCounterContext(`${achievement?.Title ?? achievement?.title ?? ''} ${achievement?.Description ?? achievement?.description ?? ''}`);
-      const relevant = relevantIds.has(id);
-      const contextMatch = Boolean(context && context.length >= 4 && text.includes(context));
-      if (counter.current <= 0 && !relevant && !contextMatch) return null;
-      const ratio = Math.max(0, Math.min(1, counter.current / counter.target));
-      const score = (counter.current >= counter.target ? 160 : counter.current > 0 ? 120 : 0)
-        + (relevant ? 90 : 0)
-        + (contextMatch ? 70 : 0)
-        + (counter.source === 'rcheevos' ? 40 : counter.source === 'ra' ? 20 : 10)
-        + ratio;
-      return { achievement, counter, score };
-    })
-    .filter(Boolean)
-    .sort((left: any, right: any) => right.score - left.score)
-    .slice(0, Math.max(1, limit))
-    .map(({ achievement, counter }: any) => ({ achievement, counter }));
-}
-
 function OverlayAchievement({ achievement, ram, state, profile, runtimeLive }: { achievement: any; ram?: Snapshot['ram']; state?: GameAchievementState; profile?: RendererGameProfile | null; runtimeLive?: RuntimeObserverLiveState }) {
   const counter = achievementCounter(achievement, ram, profile || null, runtimeLive) || state?.progress;
   const counterPct = counter ? Math.max(0, Math.min(100, (counter.current / counter.target) * 100)) : 0;
@@ -383,30 +340,23 @@ function Overlay() {
     effectiveRam?.storyFlags,
     effectiveRam?.stateFlags,
   ]);
-  const achievementStates = useMemo(
-    () => buildProfileAchievementStates(activeProfile, achievements, effectiveRam, companion),
-    [achievements, companion, effectiveRam?.timestamp, effectiveRam?.eventBitsHex, effectiveRam?.stateFlags, effectiveRam?.storyFlags, effectiveRam?.actors],
+  const pendingFaronVesselAchievement = useMemo(
+    () => findPendingFaronVesselObjective(achievements, effectiveRam),
+    [achievements, effectiveRam?.attached, effectiveRam?.stale, effectiveRam?.storyFlags?.faronTwilightStarted, effectiveRam?.storyFlags?.faronVesselObtained],
   );
+  const achievementStates = useMemo(() => {
+    const states = buildProfileAchievementStates(activeProfile, achievements, effectiveRam, companion);
+    if (pendingFaronVesselAchievement) states.set(achievementId(pendingFaronVesselAchievement), pendingFaronVesselState());
+    return states;
+  }, [achievements, companion, pendingFaronVesselAchievement, effectiveRam?.timestamp, effectiveRam?.eventBitsHex, effectiveRam?.stateFlags, effectiveRam?.storyFlags, effectiveRam?.actors]);
   const broaderCompanion = useMemo(
     () => buildProfileContext(activeProfile, achievements, presenceMessage, { live: false }),
     [achievements, presenceMessage],
   );
-  const contextIds = useMemo(() => new Set(companion.relevantAll.map(achievementId)), [companion.relevantAll]);
-  const liveAchievementCounters = useMemo(() => {
-    const relevantIds = new Set([
-      ...companion.missables,
-      ...companion.current,
-      ...companion.comingUp,
-      ...companion.relevantAll,
-    ].map(achievementId));
-    return selectLiveAchievementCounters(
-      achievements,
-      (achievement) => achievementCounter(achievement, effectiveRam, activeProfile, runtimeLive),
-      relevantIds,
-      companion.context.label || effectiveRam?.stageName || '',
-      3,
-    );
-  }, [achievements, companion, effectiveRam?.timestamp, runtimeLive?.lastFrameAt, runtimeLive?.stale]);
+  const contextIds = useMemo(() => new Set([
+    ...companion.relevantAll,
+    ...(pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : []),
+  ].map(achievementId)), [companion.relevantAll, pendingFaronVesselAchievement]);
   const fallbackAchievements = useMemo(() => {
     if (!ramLive || !companion.context.label) return [];
     const seen = new Set<string>();
@@ -426,7 +376,11 @@ function Overlay() {
     return Boolean(mapped?.coverage === 'deep' && ['available', 'in_progress', 'pending'].includes(mapped.kind) && !contextIds.has(achievementId(achievement)));
   }).slice(0, 3), [achievements, achievementStates, contextIds]);
   const contextUnlocked = companion.relevantAll.filter(earnedHardcore).length;
-  const contextTotal = companion.relevantAll.length + fallbackAchievements.length;
+  const contextTotal = new Set([
+    ...companion.relevantAll,
+    ...fallbackAchievements,
+    ...(pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : []),
+  ].map(achievementId)).size;
   const contextPct = contextTotal ? Math.round((contextUnlocked / contextTotal) * 100) : 0;
 
   useEffect(() => {
@@ -540,28 +494,13 @@ function Overlay() {
           </div>
         )}
 
-        {gameActive && liveAchievementCounters.length > 0 && (
-          <div className="v7-overlay-live-counters" aria-live="polite">
-            <div className="v7-live-counter-heading"><span>LIVE ACHIEVEMENT PROGRESS</span><small>{runtimeLive?.measuredAchievementCount ? `${runtimeLive.measuredAchievementCount} measured` : 'live'}</small></div>
-            {liveAchievementCounters.map(({ achievement, counter }) => {
-              const pct = Math.max(0, Math.min(100, (counter.current / counter.target) * 100));
-              return (
-                <div className="v7-overlay-counter" key={achievementId(achievement)}>
-                  <div><b>{achievement.Title || achievement.title}</b><strong>{counter.current} / {counter.target}</strong></div>
-                  <div className="v7-live-counter-track"><i style={{ width: `${pct}%` }} /></div>
-                  <small>{counter.source === 'rcheevos' ? 'RA measured · rcheevos' : counter.source === 'ram' ? 'RAM live fallback' : 'RA progress'}</small>
-                </div>
-              );
-            })}
-          </div>
-        )}
 
         {!gameActive ? (
           <div className="overlay-empty no-game-active">
             <b>No game active</b>
             <span>{snapshot?.dolphin.running ? 'Dolphin is open, but no supported game is currently detected.' : 'Start a supported game in Dolphin and the companion will resume automatically.'}</span>
           </div>
-        ) : companion.relevantAll.length ? (
+        ) : companion.relevantAll.length || pendingFaronVesselAchievement ? (
           <>
             <div className="context-progress-row">
               <span>{companion.context.label ? 'Context progress' : 'Route progress'}</span>
@@ -575,10 +514,10 @@ function Overlay() {
               <div className="context-sections">
                 <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="danger" title={ramLive ? '⚠ Missable now' : '⚠ Missable now / soon'} achievements={companion.missables} ram={effectiveRam} states={achievementStates} />
                 <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="current" title={companion.context.boss ? `🎯 Boss Now · ${companion.context.boss}` : '🎯 Current Story Beat'} achievements={companion.current} ram={effectiveRam} states={achievementStates} />
-                <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="coming" title="◉ Next Story Beat" achievements={companion.comingUp} ram={effectiveRam} states={achievementStates} />
+                <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="coming" title="◉ Next Story Beat" achievements={pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : companion.comingUp} ram={effectiveRam} states={achievementStates} />
                 <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="coming" title="◉ Story / RA context" achievements={fallbackAchievements} ram={effectiveRam} states={achievementStates} />
                 <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="current" title="◈ Live RAM Opportunity" achievements={deepLiveAchievements} ram={effectiveRam} states={achievementStates} />
-                {!companion.missables.length && !companion.current.length && !companion.comingUp.length && !fallbackAchievements.length && !deepLiveAchievements.length && (
+                {!companion.missables.length && !companion.current.length && !companion.comingUp.length && !pendingFaronVesselAchievement && !fallbackAchievements.length && !deepLiveAchievements.length && (
                   <div className="context-clear"><b>All relevant Hardcore achievements cleared</b><span>Nothing open for this context.</span></div>
                 )}
               </div>
@@ -598,15 +537,6 @@ function Overlay() {
           </div>
         )}
 
-        {gameActive && ramLive && (
-          <div className="v6-overlay-live-stats">
-            <span>♥ {overlayStats.hearts}</span>
-            <span>👻 {overlayStats.poeSouls}</span>
-            <span>🐜 {overlayStats.goldenBugs}</span>
-            <span>{overlayStats.form}</span>
-            {overlayStats.contextStat && <span>{overlayStats.contextStat}</span>}
-          </div>
-        )}
         <div className="presence-strip">
           <span className={`dot ${gameActive ? 'online' : ''}`} />
           <span className="presence-text">{gameActive ? (ramLive ? `${overlayStats.location || ramStage || activeProfile?.title || snapshot?.game?.profile || 'Current game'} · RAM live` : (presenceMessage || `${companion.routeLabel} · route inference active`)) : (snapshot?.dolphin.running ? 'Dolphin open · no game active' : 'No game active')}</span>
@@ -734,10 +664,15 @@ function App() {
     effectiveRam?.stateFlags,
   ]);
 
-  const achievementStates = useMemo(
-    () => buildProfileAchievementStates(activeProfile, achievements, effectiveRam, companion),
-    [achievements, companion, effectiveRam?.timestamp, effectiveRam?.eventBitsHex, effectiveRam?.stateFlags, effectiveRam?.storyFlags, effectiveRam?.actors],
+  const pendingFaronVesselAchievement = useMemo(
+    () => findPendingFaronVesselObjective(achievements, effectiveRam),
+    [achievements, effectiveRam?.attached, effectiveRam?.stale, effectiveRam?.storyFlags?.faronTwilightStarted, effectiveRam?.storyFlags?.faronVesselObtained],
   );
+  const achievementStates = useMemo(() => {
+    const states = buildProfileAchievementStates(activeProfile, achievements, effectiveRam, companion);
+    if (pendingFaronVesselAchievement) states.set(achievementId(pendingFaronVesselAchievement), pendingFaronVesselState());
+    return states;
+  }, [achievements, companion, pendingFaronVesselAchievement, effectiveRam?.timestamp, effectiveRam?.eventBitsHex, effectiveRam?.stateFlags, effectiveRam?.storyFlags, effectiveRam?.actors]);
   const broaderCompanion = useMemo(
     () => buildProfileContext(activeProfile, achievements, presenceMessage, { live: false }),
     [achievements, presenceMessage],
@@ -770,6 +705,7 @@ function App() {
   ]).filter((achievement: any) => !earnedHardcore(achievement) && !isMissableForProfile(activeProfile, achievement));
 
   const relevantAchievements = uniqueAchievements([
+    ...(pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : []),
     ...deepLiveAchievements,
     ...companion.missables,
     ...companion.current,
@@ -792,25 +728,13 @@ function App() {
   ]).filter((achievement: any) => !whatMattersAchievements.some((active: any) => achievementId(active) === achievementId(achievement)));
   const activeMissableCount = whatMattersAchievements.length;
   const currentNextAchievements = uniqueAchievements([
+    ...(pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : []),
     ...deepLiveAchievements,
     ...companion.missables,
     ...companion.current,
     ...companion.comingUp,
   ]);
 
-  const liveAchievementCounters = useMemo(() => {
-    const relevantIds = new Set([
-      ...currentNextAchievements,
-      ...relevantAchievements,
-    ].map(achievementId));
-    return selectLiveAchievementCounters(
-      achievements,
-      (achievement) => currentAchievementCounter(achievement, effectiveRam, true),
-      relevantIds,
-      companion.context.label || effectiveRam?.stageName || '',
-      4,
-    );
-  }, [achievements, currentNextAchievements, relevantAchievements, companion.context.label, effectiveRam?.timestamp, effectiveRam?.stageName, runtimeLive?.lastFrameAt, runtimeLive?.stale]);
 
   function missableState(achievement: any): GameAchievementState {
     const id = achievementId(achievement);
@@ -1058,7 +982,6 @@ function App() {
     updateOverlay,
     shortcutState,
     sessionStats,
-    liveAchievementCounters,
     username,
     setUsername,
     apiKey,
