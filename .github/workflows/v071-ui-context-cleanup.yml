@@ -1,0 +1,77 @@
+name: v0.7.1 UI Context Cleanup Validation
+
+on:
+  push:
+    branches: [feature/v0.7.1-ui-context-cleanup]
+    paths:
+      - '.github/workflows/v071-ui-context-cleanup.yml'
+      - 'app/src/**'
+      - 'scripts/test-live-achievement-counters.cjs'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/v071-ui-context-cleanup.yml'
+      - 'app/src/**'
+      - 'scripts/test-live-achievement-counters.cjs'
+
+concurrency:
+  group: v071-ui-context-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate v0.7.1 contracts and authority boundary
+        shell: pwsh
+        run: |
+          node --check app/electron/main.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Electron main syntax check failed.' }
+          node scripts/test-live-achievement-counters.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Measured counter contract failed.' }
+
+          $renderer = Get-Content 'app/src/main.tsx' -Raw
+          $pages = Get-Content 'app/src/AppPages.tsx' -Raw
+          if ($renderer.Contains('v6-overlay-live-stats')) { throw 'Redundant TP live-stats strip is still rendered.' }
+          if ($renderer.Contains('v7-overlay-live-counters')) { throw 'Dedicated overlay live-progress panel is still rendered.' }
+          if ($pages.Contains('LIVE ACHIEVEMENT PROGRESS')) { throw 'Dedicated app live-progress panel is still rendered.' }
+          if (-not $renderer.Contains('findPendingFaronVesselObjective')) { throw 'Faron Vessel prerequisite fallback is not wired into renderer.' }
+          if (-not $renderer.Contains('pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : companion.comingUp')) { throw 'Overlay next-story fallback is missing.' }
+
+          $main = Get-Content 'app/electron/main.cjs' -Raw
+          if (-not $main.Contains('const progress = baseProgress;')) { throw 'Official RA completion authority invariant is missing.' }
+          if ($main.Contains('runtimeProgress =')) { throw 'Local runtime must not replace official RA progress.' }
+
+          $runtimeData = Get-Content 'app/electron/services/ra-runtime-data-service.cjs' -Raw
+          foreach ($forbidden in @("r: 'startsession'", "r: 'ping'", "r: 'awardachievement'", "r: 'submitlbentry'")) {
+            if ($runtimeData.Contains($forbidden)) { throw "Forbidden RA submission/session endpoint found: $forbidden" }
+          }
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck regressions and production build
+        working-directory: app
+        shell: pwsh
+        run: |
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript typecheck failed.' }
+          npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed.' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Production build failed.' }
+
+      - name: Verify production renderer cleanup
+        shell: pwsh
+        run: |
+          $rendererText = (Get-ChildItem 'app/dist' -Recurse -File -Filter '*.js' | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n"
+          if ($rendererText.Contains('LIVE ACHIEVEMENT PROGRESS')) { throw 'Production renderer still contains the dedicated live-progress UI.' }
+          if ($rendererText.Contains('No immediate exact-match achievement is open') -and -not $rendererText.Contains('Obtain the Faron Vessel of Light')) { throw 'Production renderer is missing Faron prerequisite guidance.' }
