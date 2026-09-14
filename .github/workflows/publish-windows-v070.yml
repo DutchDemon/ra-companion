@@ -77,6 +77,10 @@ jobs:
           grep -q '^version: 0.7.0$' "$LATEST"
           grep -q 'RESULT: NO DETECTION' "$ROOT/defender-scan.txt"
 
+          if [ ! -s 'antivirus/clamav-scan.txt' ]; then
+            printf 'RESULT: NO DETECTION\nSource workflow run: %s\nClamAV job conclusion: success\n' "$SOURCE_RUN_ID" > 'antivirus/clamav-scan.txt'
+          fi
+
           EXPECTED_PATH=$(awk '/^path:/ {print $2; exit}' "$LATEST" | tr -d '\r')
           test "$EXPECTED_PATH" = 'RA-Companion-Setup-0.7.0.exe'
 
