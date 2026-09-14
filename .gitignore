@@ -1,0 +1,9 @@
+# Canonical application build outputs
+app/node_modules/
+app/dist/
+app/release/
+
+# Local/editor noise
+.DS_Store
+Thumbs.db
+*.log
