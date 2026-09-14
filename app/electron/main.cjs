@@ -6,6 +6,8 @@ const { createUpdateService } = require('./services/update-service.cjs');
 const { createConfigService } = require('./services/config-service.cjs');
 const { createAchievementLibraryService } = require('./services/achievement-library-service.cjs');
 const { createRuntimeHelperService } = require('./services/runtime-helper-service.cjs');
+const { createObserverRuntimeService } = require('./services/observer-runtime-service.cjs');
+const { createRaRuntimeDataService } = require('./services/ra-runtime-data-service.cjs');
 const { registerIpcHandlers } = require('./ipc/register.cjs');
 const { detectProfileFromWindowTitle, resolveGameProfile, publicGameDescriptor } = require('./game-profiles/registry.cjs');
 
@@ -119,11 +121,29 @@ const {
   getRaProgress: (...args) => getRaProgress(...args),
 });
 
+const runtimeHelperService = createRuntimeHelperService({ app });
 const {
   start: startRuntimeHelper,
   stop: stopRuntimeHelper,
   getStatus: getRuntimeHelperStatus,
-} = createRuntimeHelperService({ app });
+} = runtimeHelperService;
+
+const observerRuntimeService = createObserverRuntimeService({ runtimeHelper: runtimeHelperService });
+const {
+  getAuthStatus: getRuntimeAuthStatus,
+  loginWithPassword: loginRuntimeAccount,
+  validateStoredToken: validateRuntimeAccount,
+  disconnectRuntimeAccount,
+  ensureObserverGame,
+  getSyncStatus: getRuntimeObserverSyncStatus,
+  handleWebAccountChanged: handleRuntimeWebAccountChanged,
+} = createRaRuntimeDataService({
+  app,
+  safeStorage,
+  readConfig,
+  observerRuntime: observerRuntimeService,
+  getRuntimeHelperStatus,
+});
 
 function publicShortcutState() {
   return JSON.parse(JSON.stringify(shortcutState));
@@ -267,6 +287,7 @@ function writeConfig(next) {
     lastVerifiedAt: accountChanged ? 0 : existing.lastVerifiedAt,
   };
   persistConfig(merged);
+  handleRuntimeWebAccountChanged(requestedUsername);
   resetRaCaches();
   broadcastAchievementLibraryChanged();
   return publicConfig();
@@ -281,6 +302,7 @@ function disconnectRaAccount() {
     verifiedUsername: '',
     lastVerifiedAt: 0,
   });
+  handleRuntimeWebAccountChanged('');
   resetRaCaches();
   broadcastAchievementLibraryChanged();
   return publicConfig();
@@ -1027,6 +1049,18 @@ async function getSnapshot(forceRa = false) {
   const activeProfile = detection.profile;
   const gameId = activeProfile?.raGameId ?? null;
   const gameActive = Boolean(dolphin.running && activeProfile);
+  const runtimeAuth = getRuntimeAuthStatus();
+
+  if (gameActive && runtimeAuth.connected && dolphin?.pid) {
+    const ramGameCode = String(ram?.gameCode || '').trim().toUpperCase();
+    const profileGameCodes = Array.isArray(activeProfile?.gameCodes) ? activeProfile.gameCodes.map((value) => String(value || '').trim().toUpperCase()).filter(Boolean) : [];
+    const runtimeGameCode = profileGameCodes.includes(ramGameCode)
+      ? ramGameCode
+      : profileGameCodes.length === 1 ? profileGameCodes[0] : '';
+    ensureObserverGame({ gameId, gameCode: runtimeGameCode, dolphinPid: dolphin.pid }).catch(() => {
+      // The service records a public error state; snapshot refresh must stay responsive.
+    });
+  }
 
   // Never keep presenting cached context after the emulator/game closes.
   if (!gameActive) {
@@ -1036,6 +1070,7 @@ async function getSnapshot(forceRa = false) {
       ram,
       game: publicGameDescriptor(null),
       progress: { ok: false, inactive: true, error: 'No supported game is currently active.' },
+      runtime: { auth: runtimeAuth, observer: getRuntimeObserverSyncStatus() },
       recent: { ok: false, count: 0 },
       presence: { ok: false, inactive: true, error: 'No game active.', message: '', lastGameId: null, currentGameMatches: false, source: 'none' },
     };
@@ -1084,6 +1119,7 @@ async function getSnapshot(forceRa = false) {
     ram,
     game: publicGameDescriptor(activeProfile, detection.source),
     progress,
+    runtime: { auth: getRuntimeAuthStatus(), observer: getRuntimeObserverSyncStatus() },
     recent: { ok: Boolean(recent?.ok), count: Array.isArray(recent?.data) ? recent.data.length : 0 },
     presence,
   };
@@ -1218,6 +1254,11 @@ app.whenReady().then(() => {
     getSnapshot,
     getRamSnapshot,
     getRuntimeStatus: getRuntimeHelperStatus,
+    getRuntimeAuthStatus,
+    loginRuntimeAccount,
+    validateRuntimeAccount,
+    disconnectRuntimeAccount,
+    getRuntimeObserverStatus: getRuntimeObserverSyncStatus,
     toggleOverlay,
     getOverlayState,
     updateOverlaySettings,

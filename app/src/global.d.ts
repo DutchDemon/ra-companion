@@ -93,6 +93,33 @@ declare global {
     lastError: string;
   }
 
+  interface RuntimeAuthStatus {
+    connected: boolean;
+    username: string;
+    configuredUsername: string;
+    webAccountVerified: boolean;
+    accountMatches: boolean;
+    persistent: boolean;
+    encrypted: boolean;
+    lastValidatedAt: number;
+    needsWebAccount: boolean;
+    observerOnly: true;
+    officialCompletionAuthority: 'retroachievements-server';
+  }
+
+  interface RuntimeObserverSyncStatus {
+    phase: 'idle' | 'disconnected' | 'fetching' | 'loading' | 'ready' | 'error' | string;
+    gameId: number | null;
+    gameCode: string;
+    title: string;
+    loadedAchievementCount: number;
+    excludedAchievementCount: number;
+    dolphinPid: number | null;
+    error: string;
+    observerOnly: true;
+    officialCompletionAuthority: 'retroachievements-server';
+  }
+
   interface Window {
     raCompanion: {
       getAppVersion: () => Promise<string>;
@@ -109,6 +136,11 @@ declare global {
       getSnapshot: (forceRa?: boolean) => Promise<Snapshot>;
       getRamState: () => Promise<Snapshot['ram']>;
       getRuntimeStatus: () => Promise<RuntimeHelperStatus>;
+      getRuntimeAuthStatus: () => Promise<RuntimeAuthStatus>;
+      loginRuntimeAccount: (password: string) => Promise<RuntimeAuthStatus>;
+      validateRuntimeAccount: () => Promise<RuntimeAuthStatus>;
+      disconnectRuntimeAccount: () => Promise<RuntimeAuthStatus>;
+      getRuntimeObserverStatus: () => Promise<RuntimeObserverSyncStatus>;
       onRamStateChanged: (callback: (state: Snapshot['ram']) => void) => () => void;
       toggleOverlay: (force?: boolean) => Promise<boolean>;
       getOverlayState: () => Promise<OverlayState>;
@@ -157,6 +189,10 @@ declare global {
       inactive?: boolean;
       error?: string;
       data?: any;
+    };
+    runtime?: {
+      auth: RuntimeAuthStatus;
+      observer: RuntimeObserverSyncStatus;
     };
     ram?: {
       enabled: boolean;

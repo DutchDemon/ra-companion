@@ -494,6 +494,72 @@ export function SettingsPage() {
     disconnectAccount,
     error,
   } = useAppView();
+  const [runtimeAuth, setRuntimeAuth] = React.useState<RuntimeAuthStatus | null>(null);
+  const [runtimePassword, setRuntimePassword] = React.useState('');
+  const [runtimeBusy, setRuntimeBusy] = React.useState(false);
+  const [runtimeError, setRuntimeError] = React.useState('');
+  const [runtimeMessage, setRuntimeMessage] = React.useState('');
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const getRuntimeAuthStatus = window.raCompanion?.getRuntimeAuthStatus;
+    if (typeof getRuntimeAuthStatus !== 'function') return () => { cancelled = true; };
+    getRuntimeAuthStatus()
+      .then((status) => { if (!cancelled) setRuntimeAuth(status); })
+      .catch((runtimeStatusError) => { if (!cancelled) setRuntimeError(runtimeStatusError?.message || String(runtimeStatusError)); });
+    return () => { cancelled = true; };
+  }, [connectedUser, lastVerifiedAt]);
+
+  async function connectRuntimeData(event: React.FormEvent) {
+    event.preventDefault();
+    if (runtimeBusy) return;
+    setRuntimeBusy(true);
+    setRuntimeError('');
+    setRuntimeMessage('');
+    try {
+      const status = await window.raCompanion.loginRuntimeAccount(runtimePassword);
+      setRuntimeAuth(status);
+      setRuntimeMessage(status.persistent ? 'Runtime token connected and encrypted with OS-backed storage.' : 'Runtime token connected for this app session only; OS encryption is unavailable.');
+    } catch (runtimeLoginError: any) {
+      setRuntimeError(runtimeLoginError?.message || String(runtimeLoginError));
+    } finally {
+      setRuntimePassword('');
+      setRuntimeBusy(false);
+    }
+  }
+
+  async function validateRuntimeData() {
+    if (runtimeBusy) return;
+    setRuntimeBusy(true);
+    setRuntimeError('');
+    setRuntimeMessage('');
+    try {
+      const status = await window.raCompanion.validateRuntimeAccount();
+      setRuntimeAuth(status);
+      setRuntimeMessage('Runtime token validated with RetroAchievements.');
+    } catch (runtimeValidationError: any) {
+      setRuntimeAuth(await window.raCompanion.getRuntimeAuthStatus());
+      setRuntimeError(runtimeValidationError?.message || String(runtimeValidationError));
+    } finally {
+      setRuntimeBusy(false);
+    }
+  }
+
+  async function disconnectRuntimeData() {
+    if (runtimeBusy) return;
+    setRuntimeBusy(true);
+    setRuntimeError('');
+    setRuntimeMessage('');
+    try {
+      setRuntimeAuth(await window.raCompanion.disconnectRuntimeAccount());
+      setRuntimeMessage('Runtime data connection removed.');
+    } catch (runtimeDisconnectError: any) {
+      setRuntimeError(runtimeDisconnectError?.message || String(runtimeDisconnectError));
+    } finally {
+      setRuntimeBusy(false);
+    }
+  }
+
   return (
     <>
       <header className="v5-page-header"><div><span className="v5-page-icon">⚙</span><div><h1>Settings</h1><p>RetroAchievements account and companion preferences.</p></div></div></header>
@@ -514,6 +580,25 @@ export function SettingsPage() {
           <small className="v5-muted">Leaving the API key blank keeps the currently stored key. Switching accounts clears the old progress immediately; a failed new connection never restores the previous user's progress.</small>
           {saved && <div className="saved">{saved}</div>}
           {accountError && <div className="error-card v6-inline-error">{accountError}</div>}
+        </div>
+      </form>
+      <form className="v5-panel v5-settings-form" onSubmit={connectRuntimeData}>
+        <div className="v5-section-label">RCHEEVOS OBSERVER DATA</div>
+        <div className="v5-account-connection v6-account-connection">
+          <div className="v5-card-heading"><div><h3>Runtime data connection</h3><small className="v5-muted">Separate from your Web API key. This connection only fetches official game definitions for the local read-only observer.</small></div><span className={`v5-status-pill ${runtimeAuth?.connected ? 'complete' : runtimeError ? 'danger' : 'neutral'}`}>{runtimeAuth?.connected ? 'CONNECTED' : runtimeError ? 'ERROR' : 'DISCONNECTED'}</span></div>
+          <label htmlFor="ra-runtime-password">RA password<input id="ra-runtime-password" name="runtimePassword" autoComplete="current-password" type="password" value={runtimePassword} onChange={(e) => setRuntimePassword(e.target.value)} placeholder={runtimeAuth?.connected ? 'Token already stored · enter password only to reconnect' : 'Used once to request a runtime token'} disabled={!connectedUser || runtimeBusy} /></label>
+          <button type="submit" disabled={!connectedUser || !runtimePassword || runtimeBusy}>{runtimeBusy ? 'Working…' : runtimeAuth?.connected ? 'Reconnect runtime data' : 'Connect runtime data'}</button>
+          <div className="v6-account-facts">
+            <div><span>Runtime account</span><b>{runtimeAuth?.connected ? runtimeAuth.username : 'Not connected'}</b></div>
+            <div><span>Token storage</span><b>{runtimeAuth?.connected ? (runtimeAuth.persistent ? 'OS-encrypted' : 'Memory only') : '—'}</b></div>
+            <div><span>Last validated</span><b>{runtimeAuth?.lastValidatedAt ? new Date(runtimeAuth.lastValidatedAt).toLocaleString() : '—'}</b></div>
+            <div><span>Authority</span><b>RA server</b></div>
+          </div>
+          <div className="v6-account-actions"><button type="button" className="secondary" disabled={!runtimeAuth?.connected || runtimeBusy} onClick={validateRuntimeData}>Validate token</button><button type="button" className="secondary danger-button" disabled={!runtimeAuth?.connected || runtimeBusy} onClick={disconnectRuntimeData}>Disconnect runtime data</button></div>
+          <small className="v5-muted">RA Companion never stores your password. It is sent only for the one-time <code>login2</code> token exchange. The observer does not call start-session, ping, unlock or leaderboard-submit endpoints.</small>
+          {!connectedUser && <div className="error-card v6-inline-error">Connect and verify the Web API account above first.</div>}
+          {runtimeMessage && <div className="saved">{runtimeMessage}</div>}
+          {runtimeError && <div className="error-card v6-inline-error">{runtimeError}</div>}
         </div>
       </form>
       {error && <article className="v5-panel error-card">{error}</article>}

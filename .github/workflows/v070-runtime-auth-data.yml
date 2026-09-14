@@ -1,0 +1,84 @@
+name: v0.7 Runtime Auth + Game Data
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/v0.7.0-runtime-auth-data]
+    paths:
+      - '.gitattributes'
+      - 'app/**'
+      - 'scripts/test-ra-runtime-data-service.cjs'
+      - 'scripts/test-observer-runtime-service.cjs'
+      - '.github/workflows/v070-runtime-auth-data.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.gitattributes'
+      - 'app/**'
+      - 'scripts/test-ra-runtime-data-service.cjs'
+      - 'scripts/test-observer-runtime-service.cjs'
+      - '.github/workflows/v070-runtime-auth-data.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v070-runtime-auth-data-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate runtime auth services and syntax
+        shell: pwsh
+        run: |
+          node --check app/electron/services/ra-runtime-data-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'RA runtime data service syntax check failed.' }
+          node --check app/electron/services/observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer runtime service syntax check failed.' }
+          node --check app/electron/main.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Electron main syntax check failed.' }
+          node --check app/electron/ipc/register.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'IPC syntax check failed.' }
+          node --check app/electron/preload.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Preload syntax check failed.' }
+          node scripts/test-ra-runtime-data-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'RA runtime data service tests failed.' }
+          node scripts/test-observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer runtime service tests failed.' }
+
+      - name: Guard observer-only network surface
+        shell: pwsh
+        run: |
+          $service = Get-Content 'app/electron/services/ra-runtime-data-service.cjs' -Raw
+          foreach ($forbidden in @("r: 'startsession'", "r: 'ping'", "r: 'awardachievement'", "r: 'submitlbentry'")) {
+            if ($service.Contains($forbidden)) { throw "Forbidden runtime endpoint found in service: $forbidden" }
+          }
+          if (-not $service.Contains("r: 'login2'")) { throw 'Runtime login2 token exchange is missing.' }
+          if (-not $service.Contains("r: 'patch'")) { throw 'Official patch-data request is missing.' }
+          if ($service.Contains('apiKey: credential.token')) { throw 'Runtime token must not be repurposed as the Web API key.' }
+          $main = Get-Content 'app/electron/main.cjs' -Raw
+          if (-not $main.Contains('const progress = baseProgress;')) { throw 'Official RA progress authority invariant is missing.' }
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Strict type, regression and production checks
+        working-directory: app
+        shell: pwsh
+        run: |
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript typecheck failed.' }
+          npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed.' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Production build failed.' }

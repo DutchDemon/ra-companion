@@ -11,6 +11,11 @@ function registerIpcHandlers(ipcMain, handlers) {
   ipcMain.handle('snapshot:get', (_event, forceRa) => handlers.getSnapshot(Boolean(forceRa)));
   ipcMain.handle('ram:get', () => handlers.getRamSnapshot());
   ipcMain.handle('runtime:status', () => handlers.getRuntimeStatus());
+  ipcMain.handle('runtime:auth-status', () => handlers.getRuntimeAuthStatus());
+  ipcMain.handle('runtime:auth-login', (_event, payload) => handlers.loginRuntimeAccount(payload));
+  ipcMain.handle('runtime:auth-validate', () => handlers.validateRuntimeAccount());
+  ipcMain.handle('runtime:auth-disconnect', () => handlers.disconnectRuntimeAccount());
+  ipcMain.handle('runtime:observer-status', () => handlers.getRuntimeObserverStatus());
   ipcMain.handle('overlay:toggle', (_event, force) => handlers.toggleOverlay(force));
   ipcMain.handle('overlay:state', () => handlers.getOverlayState());
   ipcMain.handle('overlay:update', (_event, patch) => handlers.updateOverlaySettings(patch));
