@@ -1,15 +1,15 @@
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$payload = Join-Path $PSScriptRoot 'v0.6.1-transform.py.gz.b64'
 $tempGz = Join-Path $env:RUNNER_TEMP 'ra-companion-v061.py.gz'
 $tempPy = Join-Path $env:RUNNER_TEMP 'ra-companion-v061.py'
 
-if (-not (Test-Path $payload)) {
-    throw "Missing v0.6.1 transform payload: $payload"
+$parts = Get-ChildItem (Join-Path $PSScriptRoot 'v0.6.1-transform.part*.b64') | Sort-Object Name
+if ($parts.Count -lt 1) {
+    throw 'Missing v0.6.1 transform payload parts.'
 }
-
-[IO.File]::WriteAllBytes($tempGz, [Convert]::FromBase64String((Get-Content $payload -Raw).Trim()))
+$payloadB64 = ($parts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ''
+[IO.File]::WriteAllBytes($tempGz, [Convert]::FromBase64String($payloadB64))
 
 $input = [IO.File]::OpenRead($tempGz)
 try {
