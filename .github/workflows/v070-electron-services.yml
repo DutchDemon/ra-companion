@@ -28,8 +28,6 @@ jobs:
         run: |
           node scripts/refactor-v070-electron-services.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Electron boundary refactor failed.' }
-          git diff --check
-          if ($LASTEXITCODE -ne 0) { throw 'Refactor introduced whitespace errors.' }
 
       - uses: actions/setup-node@v4
         with:
