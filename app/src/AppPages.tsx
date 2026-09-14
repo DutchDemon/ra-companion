@@ -253,6 +253,7 @@ export function CurrentGamePage() {
     companion,
     effectiveRam,
     presenceMessage,
+    presenceSource,
     ramRoom,
     ramLive,
     serverPresenceMessage,
@@ -279,7 +280,7 @@ export function CurrentGamePage() {
               <div><span>Bottles</span><b>{typeof effectiveRam?.bottleCount === 'number' ? effectiveRam.bottleCount : '—'}</b></div>
               <div><span>Player control</span><b>{effectiveRam?.playerControl === true ? 'Yes' : effectiveRam?.playerControl === false ? 'No' : '—'}</b></div>
               <div><span>Cutscene</span><b>{effectiveRam?.inCutscene === true ? 'Yes' : effectiveRam?.inCutscene === false ? 'No' : '—'}</b></div>
-              <div><span>Context source</span><b>{snapshot?.presence?.source === 'rcheevos-runtime' ? 'Official RA · rcheevos' : snapshot?.presence?.source === 'ram' || (presenceMessage && ramLive) ? 'Dolphin RAM fallback' : serverPresenceMessage ? 'RA server profile' : 'Waiting'}</b></div>
+              <div><span>Context source</span><b>{presenceSource === 'rcheevos-runtime' ? 'Official RA · rcheevos' : presenceSource === 'ram' ? 'Dolphin RAM fallback' : presenceSource === 'retro-achievements' ? 'RA server profile' : 'Waiting'}</b></div>
             </div>
           </article>
           <article className="v5-panel">

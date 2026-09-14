@@ -303,6 +303,7 @@ function Overlay() {
   const fastRamPresence = ramPresenceMessage(effectiveRam, activeProfile);
   const fallbackSnapshotPresence = snapshot?.presence?.source === 'rcheevos-runtime' ? '' : serverPresenceMessage;
   const presenceMessage = officialPresenceMessage || fastRamPresence || fallbackSnapshotPresence;
+  const presenceSource = officialPresenceMessage ? 'rcheevos-runtime' : fastRamPresence ? 'ram' : fallbackSnapshotPresence ? (snapshot?.presence?.source || 'retro-achievements') : 'none';
   const ramLive = Boolean(effectiveRam?.attached && !effectiveRam?.stale);
   const ramStage = effectiveRam?.stageName || effectiveRam?.stageCode || '';
   const ramRoom = typeof effectiveRam?.room === 'number' ? effectiveRam.room : null;
@@ -618,6 +619,7 @@ function App() {
   const fastRamPresence = ramPresenceMessage(effectiveRam, activeProfile);
   const fallbackSnapshotPresence = snapshot?.presence?.source === 'rcheevos-runtime' ? '' : serverPresenceMessage;
   const presenceMessage = officialPresenceMessage || fastRamPresence || fallbackSnapshotPresence;
+  const presenceSource = officialPresenceMessage ? 'rcheevos-runtime' : fastRamPresence ? 'ram' : fallbackSnapshotPresence ? (snapshot?.presence?.source || 'retro-achievements') : 'none';
   const ramRoom = typeof effectiveRam?.room === 'number' ? effectiveRam.room : null;
   const sessionStats = useMemo(() => liveSessionStats(effectiveRam, activeProfile), [effectiveRam?.timestamp, effectiveRam?.stageCode, effectiveRam?.currentHearts, effectiveRam?.maxHearts, effectiveRam?.poeSouls, effectiveRam?.goldenBugs, effectiveRam?.faronTears, effectiveRam?.storyFlags]);
 
@@ -947,6 +949,7 @@ function App() {
     ramRoom,
     serverPresenceMessage,
     presenceMessage,
+    presenceSource,
     companion,
     achievementStates,
     allMissables,

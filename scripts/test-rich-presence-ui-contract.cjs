@@ -10,6 +10,8 @@ assert(main.includes("source: 'rcheevos-runtime'"));
 assert(main.includes('hasLiveRuntimeContext'));
 assert(main.indexOf('if (hasLiveRuntimeContext)') < main.indexOf('else if (hasLiveRamContext)'));
 assert(renderer.includes('officialPresenceMessage || fastRamPresence || fallbackSnapshotPresence'));
+assert(renderer.includes("const presenceSource = officialPresenceMessage ? 'rcheevos-runtime' : fastRamPresence ? 'ram'"));
+assert(pages.includes("presenceSource === 'rcheevos-runtime' ? 'Official RA · rcheevos'"));
 assert(renderer.includes('v7-overlay-rich-presence'));
 assert(pages.includes('v7-session-rich-presence'));
 assert(pages.includes("'Official RA · rcheevos'"));
