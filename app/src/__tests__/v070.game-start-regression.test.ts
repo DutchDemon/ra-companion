@@ -34,7 +34,8 @@ describe('v0.7 game-start regression guards', () => {
 
     expect(pkg).toContain('"RAM_DIAGNOSTICS.bat"');
     expect(pkg).toContain('"typecheck": "tsc --noEmit"');
-    expect(launcher).toContain('-File "%~dp0tools\\ram-diagnostics.ps1" %*');
+    expect(launcher).toContain('for %%I in ("%~f0") do set "APPDIR=%%~dpI"');
+    expect(launcher).toContain('-File "%APPDIR%tools\\ram-diagnostics.ps1" %*');
     expect(launcher).toContain('"-SelfTest"');
     expect(diagnostics).toContain('[switch]$SelfTest');
     expect(diagnostics).toContain('Packaged RAM diagnostics self-test passed.');
