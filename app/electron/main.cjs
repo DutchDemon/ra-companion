@@ -1070,7 +1070,7 @@ async function getSnapshot(forceRa = false) {
       ram,
       game: publicGameDescriptor(null),
       progress: { ok: false, inactive: true, error: 'No supported game is currently active.' },
-      runtime: { auth: runtimeAuth, observer: getRuntimeObserverSyncStatus() },
+      runtime: { auth: runtimeAuth, observer: getRuntimeObserverSyncStatus(), live: observerRuntimeService.getLiveState() },
       recent: { ok: false, count: 0 },
       presence: { ok: false, inactive: true, error: 'No game active.', message: '', lastGameId: null, currentGameMatches: false, source: 'none' },
     };
@@ -1142,7 +1142,7 @@ async function getSnapshot(forceRa = false) {
     ram,
     game: publicGameDescriptor(activeProfile, detection.source),
     progress,
-    runtime: { auth: getRuntimeAuthStatus(), observer: getRuntimeObserverSyncStatus() },
+    runtime: { auth: getRuntimeAuthStatus(), observer: getRuntimeObserverSyncStatus(), live: runtimeLive },
     recent: { ok: Boolean(recent?.ok), count: Array.isArray(recent?.data) ? recent.data.length : 0 },
     presence,
   };

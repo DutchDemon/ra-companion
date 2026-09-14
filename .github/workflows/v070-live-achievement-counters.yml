@@ -1,0 +1,75 @@
+name: v0.7 Live Achievement Counter Validation
+
+on:
+  push:
+    branches: [feature/v0.7.0-live-achievement-counters]
+    paths:
+      - '.github/workflows/v070-live-achievement-counters.yml'
+      - 'docs/V0.7-LIVE-ACHIEVEMENT-COUNTERS.md'
+      - 'app/electron/main.cjs'
+      - 'app/electron/services/observer-runtime-service.cjs'
+      - 'app/electron/services/ra-runtime-data-service.cjs'
+      - 'app/src/**'
+      - 'scripts/test-live-achievement-counters.cjs'
+      - 'scripts/test-observer-runtime-service.cjs'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/v070-live-achievement-counters.yml'
+      - 'docs/V0.7-LIVE-ACHIEVEMENT-COUNTERS.md'
+      - 'app/electron/main.cjs'
+      - 'app/electron/services/observer-runtime-service.cjs'
+      - 'app/electron/services/ra-runtime-data-service.cjs'
+      - 'app/src/**'
+      - 'scripts/test-live-achievement-counters.cjs'
+      - 'scripts/test-observer-runtime-service.cjs'
+
+concurrency:
+  group: v070-live-achievement-counters-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate live counter contracts
+        shell: pwsh
+        run: |
+          node scripts/test-live-achievement-counters.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Live achievement counter contract failed.' }
+          node scripts/test-observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer measured-progress regression tests failed.' }
+
+      - name: Guard observer-only authority boundary
+        shell: pwsh
+        run: |
+          $main = Get-Content 'app/electron/main.cjs' -Raw
+          if (-not $main.Contains('const progress = baseProgress;')) { throw 'Official RA completion authority invariant is missing.' }
+          if ($main.Contains('runtimeProgress =')) { throw 'Local runtime must not replace official RA progress.' }
+
+          $runtimeData = Get-Content 'app/electron/services/ra-runtime-data-service.cjs' -Raw
+          foreach ($forbidden in @("r: 'startsession'", "r: 'ping'", "r: 'awardachievement'", "r: 'submitlbentry'")) {
+            if ($runtimeData.Contains($forbidden)) { throw "Forbidden RA runtime endpoint found: $forbidden" }
+          }
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Type, regression and production checks
+        working-directory: app
+        shell: pwsh
+        run: |
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript typecheck failed.' }
+          npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed.' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Production build failed.' }

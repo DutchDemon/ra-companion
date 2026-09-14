@@ -23,7 +23,7 @@ export interface TwilightAchievementProgress {
   current: number;
   target: number;
   label: string;
-  source: 'ram' | 'ra';
+  source: 'rcheevos' | 'ram' | 'ra';
 }
 
 export interface TwilightAchievementState {
