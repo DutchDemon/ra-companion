@@ -2,7 +2,10 @@ const { app, BrowserWindow, ipcMain, globalShortcut, screen, safeStorage } = req
 const path = require('path');
 const fs = require('fs');
 const { execFile, spawn } = require('child_process');
-const { autoUpdater } = require('electron-updater');
+const { createUpdateService } = require('./services/update-service.cjs');
+const { createConfigService } = require('./services/config-service.cjs');
+const { createAchievementLibraryService } = require('./services/achievement-library-service.cjs');
+const { registerIpcHandlers } = require('./ipc/register.cjs');
 
 // Keep settings in the same location used by the development/portable builds.
 app.setPath('userData', path.join(app.getPath('appData'), 'ra-companion'));
@@ -19,184 +22,6 @@ function getNativePowerShellPath() {
     return path.join(windowsDir, 'Sysnative', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   }
   return path.join(windowsDir, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-}
-
-let appUpdater = null;
-let updateStatusCache = null;
-
-function broadcastUpdateStatus(status) {
-  updateStatusCache = status;
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('update:status-changed', status);
-  }
-  return status;
-}
-
-function getUpdater() {
-  if (appUpdater) return appUpdater;
-  if (process.platform !== 'win32' || !app.isPackaged) return null;
-
-  const updater = autoUpdater;
-  updater.autoDownload = false;
-  updater.autoInstallOnAppQuit = false;
-  updater.allowDowngrade = false;
-
-  updater.on('download-progress', (info) => {
-    const percent = Math.max(0, Math.min(100, Number(info?.percent) || 0));
-    broadcastUpdateStatus({
-      ...(updateStatusCache || {}),
-      ok: true,
-      currentVersion: app.getVersion(),
-      available: true,
-      packaged: app.isPackaged,
-      installing: false,
-      phase: 'downloading',
-      progress: percent,
-      transferred: Number(info?.transferred) || 0,
-      total: Number(info?.total) || 0,
-      bytesPerSecond: Number(info?.bytesPerSecond) || 0,
-      message: `Downloading update… ${Math.round(percent)}%`,
-    });
-  });
-
-  updater.on('update-downloaded', () => {
-    broadcastUpdateStatus({
-      ...(updateStatusCache || {}),
-      ok: true,
-      currentVersion: app.getVersion(),
-      available: true,
-      packaged: app.isPackaged,
-      installing: false,
-      phase: 'downloaded',
-      progress: 100,
-      message: 'Update downloaded. Preparing installation…',
-    });
-  });
-
-  updater.on('error', (error) => {
-    broadcastUpdateStatus({
-      ...(updateStatusCache || {}),
-      ok: false,
-      currentVersion: app.getVersion(),
-      available: Boolean(updateStatusCache?.available),
-      installing: false,
-      phase: 'error',
-      error: error?.message || 'Update check failed.',
-      message: 'Update failed. You can try again.',
-      packaged: app.isPackaged,
-    });
-  });
-  appUpdater = updater;
-  return updater;
-}
-
-function releaseNotesText(value) {
-  if (!value) return '';
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value)) {
-    return value.map((item) => typeof item === 'string' ? item : item?.note || '').filter(Boolean).join('\n');
-  }
-  return String(value?.note || '');
-}
-
-async function checkForUpdates(force = false) {
-  const currentVersion = app.getVersion();
-  if (process.platform !== 'win32' || !app.isPackaged) {
-    return {
-      ok: true,
-      currentVersion,
-      latestVersion: currentVersion,
-      available: false,
-      packaged: app.isPackaged,
-      message: 'Update checks are available in the installed Windows build.',
-    };
-  }
-
-  if (!force && updateStatusCache?.ok && updateStatusCache.checkedAt && Date.now() - updateStatusCache.checkedAt < 5 * 60 * 1000) {
-    return updateStatusCache;
-  }
-
-  try {
-    const updater = getUpdater();
-    const result = await updater.checkForUpdates();
-    const info = result?.updateInfo || {};
-    const latestVersion = String(info.version || currentVersion);
-    const available = compareVersions(latestVersion, currentVersion) > 0;
-    updateStatusCache = {
-      ok: true,
-      currentVersion,
-      latestVersion,
-      available,
-      notes: releaseNotesText(info.releaseNotes),
-      packaged: app.isPackaged,
-      checkedAt: Date.now(),
-    };
-    return updateStatusCache;
-  } catch (error) {
-    updateStatusCache = {
-      ok: false,
-      currentVersion,
-      available: false,
-      packaged: app.isPackaged,
-      checkedAt: Date.now(),
-      error: error?.message || 'Could not check for updates.',
-    };
-    return updateStatusCache;
-  }
-}
-
-async function installAvailableUpdate() {
-  const status = await checkForUpdates(true);
-  if (!status.ok) return status;
-  if (!status.available) return { ...status, installing: false, phase: 'current', message: 'RA Companion is already up to date.' };
-
-  try {
-    const updater = getUpdater();
-    broadcastUpdateStatus({ ...status, installing: false, phase: 'downloading', progress: 0, message: 'Starting update download…' });
-    await updater.downloadUpdate();
-    await new Promise((resolve) => setTimeout(resolve, 900));
-
-    const result = broadcastUpdateStatus({
-      ...status,
-      ok: true,
-      available: true,
-      installing: true,
-      phase: 'installing',
-      progress: 100,
-      message: `RA Companion ${status.latestVersion} is ready. Installing silently and restarting…`,
-    });
-    setTimeout(() => updater.quitAndInstall(true, true), 1400);
-    return result;
-  } catch (error) {
-    return broadcastUpdateStatus({
-      ...status,
-      ok: false,
-      installing: false,
-      phase: 'error',
-      error: error?.message || 'Could not download or install the update.',
-      message: 'Update failed. You can try again.',
-    });
-  }
-}
-
-function versionParts(version) {
-  return String(version || '0').replace(/^v/i, '').split('.').map((part) => {
-    const n = Number.parseInt(part, 10);
-    return Number.isFinite(n) ? n : 0;
-  });
-}
-
-function compareVersions(a, b) {
-  const left = versionParts(a);
-  const right = versionParts(b);
-  const length = Math.max(left.length, right.length);
-  for (let i = 0; i < length; i += 1) {
-    const l = left[i] || 0;
-    const r = right[i] || 0;
-    if (l > r) return 1;
-    if (l < r) return -1;
-  }
-  return 0;
 }
 
 const TWILIGHT_PRINCESS_GAME_ID = 3934;
@@ -258,6 +83,40 @@ const shortcutState = {
   },
 };
 let shortcutHealthTimer = null;
+
+const {
+  normalizeBounds,
+  normalizeOverlay,
+  normalizeShortcuts,
+  readRawConfig,
+  readConfig,
+  persistConfig,
+  publicConfig,
+} = createConfigService({
+  app,
+  safeStorage,
+  defaultOverlay: DEFAULT_OVERLAY,
+  minOverlayWidth: MIN_OVERLAY_WIDTH,
+  minOverlayHeight: MIN_OVERLAY_HEIGHT,
+  defaultShortcuts: DEFAULT_SHORTCUTS,
+});
+
+const { checkForUpdates, installAvailableUpdate } = createUpdateService({
+  app,
+  getMainWindow: () => mainWindow,
+});
+
+const {
+  rememberAchievementGame,
+  getAchievementLibrary,
+  broadcastAchievementLibraryChanged,
+  refreshAchievementLibrary,
+} = createAchievementLibraryService({
+  app,
+  readConfig,
+  getMainWindow: () => mainWindow,
+  getRaProgress: (...args) => getRaProgress(...args),
+});
 
 function publicShortcutState() {
   return JSON.parse(JSON.stringify(shortcutState));
@@ -380,246 +239,6 @@ let ramLatest = {
   timestamp: 0,
 };
 
-function configPath() {
-  return path.join(app.getPath('userData'), 'config.json');
-}
-
-
-const ACHIEVEMENT_LIBRARY_VERSION = 1;
-
-function achievementLibraryPath() {
-  return path.join(app.getPath('userData'), 'achievement-library.json');
-}
-
-function readAchievementLibraryStore() {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(achievementLibraryPath(), 'utf8'));
-    if (parsed && typeof parsed === 'object' && parsed.accounts && typeof parsed.accounts === 'object') {
-      return {
-        version: Number(parsed.version || ACHIEVEMENT_LIBRARY_VERSION),
-        accounts: parsed.accounts,
-      };
-    }
-  } catch {
-    // First run, deleted cache, or an invalid cache: start clean.
-  }
-  return { version: ACHIEVEMENT_LIBRARY_VERSION, accounts: {} };
-}
-
-function writeAchievementLibraryStore(store) {
-  const target = achievementLibraryPath();
-  const tmp = `${target}.tmp`;
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(tmp, JSON.stringify({
-    version: ACHIEVEMENT_LIBRARY_VERSION,
-    accounts: store?.accounts || {},
-  }, null, 2), 'utf8');
-  try {
-    fs.renameSync(tmp, target);
-  } catch {
-    fs.copyFileSync(tmp, target);
-    fs.unlinkSync(tmp);
-  }
-}
-
-function achievementLibraryAccountKey(username) {
-  return String(username || '').trim().toLowerCase();
-}
-
-function achievementLibraryEntry(gameId, data, previous = null) {
-  const rawAchievements = data?.Achievements || {};
-  const achievements = Array.isArray(rawAchievements)
-    ? rawAchievements.map((achievement) => ({ ...achievement }))
-    : Object.fromEntries(Object.entries(rawAchievements).map(([id, achievement]) => [id, { ...achievement }]));
-  const achievementList = Array.isArray(achievements) ? achievements : Object.values(achievements);
-  const unlockedFromList = achievementList.filter((achievement) => Boolean(achievement?.DateEarnedHardcore || achievement?.dateEarnedHardcore)).length;
-  const total = Number(data?.NumAchievements ?? data?.numAchievements ?? achievementList.length) || achievementList.length;
-  const unlocked = Number(data?.NumAwardedToUserHardcore ?? data?.numAwardedToUserHardcore ?? unlockedFromList) || unlockedFromList;
-  return {
-    gameId: Number(gameId),
-    title: String(data?.Title || data?.title || previous?.title || `RetroAchievements Game ${gameId}`),
-    consoleId: Number(data?.ConsoleID ?? data?.consoleId ?? previous?.consoleId ?? 0) || null,
-    consoleName: String(data?.ConsoleName || data?.consoleName || previous?.consoleName || ''),
-    imageIcon: String(data?.ImageIcon || data?.imageIcon || previous?.imageIcon || ''),
-    imageTitle: String(data?.ImageTitle || data?.imageTitle || previous?.imageTitle || ''),
-    numAchievements: total,
-    numAwardedToUserHardcore: unlocked,
-    achievements,
-    lastSyncedAt: Date.now(),
-  };
-}
-
-function rememberAchievementGame(username, gameId, data) {
-  const cleanUsername = String(username || '').trim();
-  const numericGameId = Number(gameId);
-  if (!cleanUsername || !Number.isFinite(numericGameId) || numericGameId <= 0 || !data) return null;
-
-  const store = readAchievementLibraryStore();
-  const accountKey = achievementLibraryAccountKey(cleanUsername);
-  const account = store.accounts[accountKey] && typeof store.accounts[accountKey] === 'object'
-    ? store.accounts[accountKey]
-    : { username: cleanUsername, games: {} };
-  account.username = cleanUsername;
-  account.games = account.games && typeof account.games === 'object' ? account.games : {};
-  const gameKey = String(numericGameId);
-  const entry = achievementLibraryEntry(numericGameId, data, account.games[gameKey]);
-  account.games[gameKey] = entry;
-  store.accounts[accountKey] = account;
-  writeAchievementLibraryStore(store);
-
-  const current = readConfig();
-  const verified = current.username && current.verifiedUsername
-    && current.username.toLowerCase() === current.verifiedUsername.toLowerCase();
-  if (verified && current.username.toLowerCase() === cleanUsername.toLowerCase()) {
-    broadcastAchievementLibraryChanged();
-  }
-  return entry;
-}
-
-function getAchievementLibrary() {
-  const config = readConfig();
-  const username = String(config.username || '').trim();
-  const verified = username && config.verifiedUsername
-    && username.toLowerCase() === String(config.verifiedUsername).trim().toLowerCase();
-  if (!verified) {
-    return { version: ACHIEVEMENT_LIBRARY_VERSION, username: '', games: [] };
-  }
-
-  const store = readAchievementLibraryStore();
-  const account = store.accounts[achievementLibraryAccountKey(username)] || { games: {} };
-  const games = Object.values(account.games || {})
-    .filter((game) => Number(game?.gameId) > 0)
-    .sort((a, b) => Number(b?.lastSyncedAt || 0) - Number(a?.lastSyncedAt || 0) || String(a?.title || '').localeCompare(String(b?.title || '')));
-  return {
-    version: ACHIEVEMENT_LIBRARY_VERSION,
-    username,
-    games,
-  };
-}
-
-function broadcastAchievementLibraryChanged() {
-  const library = getAchievementLibrary();
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('library:changed', library);
-  }
-  return library;
-}
-
-async function refreshAchievementLibrary() {
-  const config = readConfig();
-  const verified = config.username && config.verifiedUsername
-    && config.username.toLowerCase() === config.verifiedUsername.toLowerCase();
-  if (!verified || !config.apiKey) {
-    return { ...getAchievementLibrary(), ok: false, error: 'Connect and verify a RetroAchievements account first.' };
-  }
-
-  const known = getAchievementLibrary();
-  for (const game of known.games) {
-    // User-triggered refresh only. Keep requests sequential so adding more games later
-    // does not hammer RetroAchievements with a burst of parallel calls.
-    await getRaProgress(Number(game.gameId), true);
-  }
-  return { ...getAchievementLibrary(), ok: true };
-}
-
-function clampOpacity(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return DEFAULT_OVERLAY.opacity;
-  return Math.max(0.65, Math.min(1, Math.round(n * 100) / 100));
-}
-
-function normalizeBounds(input) {
-  if (!input || typeof input !== 'object') return null;
-  const x = Number(input.x);
-  const y = Number(input.y);
-  const width = Number(input.width);
-  const height = Number(input.height);
-  if (![x, y, width, height].every(Number.isFinite)) return null;
-  return {
-    x: Math.round(x),
-    y: Math.round(y),
-    width: Math.max(MIN_OVERLAY_WIDTH, Math.round(width)),
-    height: Math.max(MIN_OVERLAY_HEIGHT, Math.round(height)),
-  };
-}
-
-function normalizeOverlay(input = {}) {
-  const mode = 'full';
-  const corners = new Set(['top-left', 'top-right', 'bottom-left', 'bottom-right']);
-  const corner = corners.has(input.corner) ? input.corner : DEFAULT_OVERLAY.corner;
-  return {
-    mode,
-    clickThrough: Boolean(input.clickThrough),
-    corner,
-    opacity: clampOpacity(input.opacity),
-    manualPlacement: Boolean(input.manualPlacement),
-    bounds: normalizeBounds(input.bounds),
-  };
-}
-
-function decryptApiKey(raw) {
-  if (raw?.apiKeyEncrypted && safeStorage.isEncryptionAvailable()) {
-    try {
-      return safeStorage.decryptString(Buffer.from(raw.apiKeyEncrypted, 'base64'));
-    } catch {
-      return '';
-    }
-  }
-  return String(raw?.apiKey || '');
-}
-
-function readRawConfig() {
-  try {
-    return JSON.parse(fs.readFileSync(configPath(), 'utf8'));
-  } catch {
-    return {};
-  }
-}
-
-function normalizeAccelerator(value, fallback) {
-  const trimmed = String(value || '').trim();
-  return trimmed || fallback;
-}
-
-function normalizeShortcuts(input = {}) {
-  return {
-    overlayToggle: normalizeAccelerator(input.overlayToggle, DEFAULT_SHORTCUTS.overlayToggle),
-    clickThrough: normalizeAccelerator(input.clickThrough, DEFAULT_SHORTCUTS.clickThrough),
-  };
-}
-
-function readConfig() {
-  const raw = readRawConfig();
-  return {
-    username: String(raw.username || '').trim(),
-    apiKey: decryptApiKey(raw).trim(),
-    overlay: normalizeOverlay(raw.overlay || DEFAULT_OVERLAY),
-    shortcuts: normalizeShortcuts(raw.shortcuts || {}),
-    verifiedUsername: String(raw.verifiedUsername || '').trim(),
-    lastVerifiedAt: Number(raw.lastVerifiedAt || 0) || 0,
-  };
-}
-
-function persistConfig(config) {
-  const raw = {
-    username: String(config.username || '').trim(),
-    overlay: normalizeOverlay(config.overlay || DEFAULT_OVERLAY),
-    shortcuts: normalizeShortcuts(config.shortcuts || {}),
-    verifiedUsername: String(config.verifiedUsername || '').trim(),
-    lastVerifiedAt: Number(config.lastVerifiedAt || 0) || 0,
-  };
-
-  const apiKey = String(config.apiKey || '').trim();
-  if (apiKey && safeStorage.isEncryptionAvailable()) {
-    raw.apiKeyEncrypted = safeStorage.encryptString(apiKey).toString('base64');
-  } else if (apiKey) {
-    // Fallback only when OS encryption is unavailable.
-    raw.apiKey = apiKey;
-  }
-
-  fs.mkdirSync(path.dirname(configPath()), { recursive: true });
-  fs.writeFileSync(configPath(), JSON.stringify(raw, null, 2), 'utf8');
-}
 
 function resetRaCaches() {
   raProgressCache = { gameId: null, username: '', fetchedAt: 0, result: null, pending: null };
@@ -668,18 +287,6 @@ function updateShortcutSettings(patch) {
   });
   persistConfig({ ...existing, shortcuts });
   return registerGlobalShortcuts();
-}
-
-function publicConfig() {
-  const config = readConfig();
-  return {
-    username: config.username || '',
-    hasApiKey: Boolean(config.apiKey),
-    apiKeyEncrypted: Boolean(readRawConfig().apiKeyEncrypted),
-    verifiedUsername: config.verifiedUsername || '',
-    lastVerifiedAt: config.lastVerifiedAt || 0,
-    shortcuts: config.shortcuts,
-  };
 }
 
 function getOverlayState() {
@@ -1626,30 +1233,32 @@ app.whenReady().then(() => {
     persistConfig(startupConfig);
   }
 
-  ipcMain.handle('app:version', () => app.getVersion());
-  ipcMain.handle('config:get', () => publicConfig());
-  ipcMain.handle('update:check', (_event, force) => checkForUpdates(Boolean(force)));
-  ipcMain.handle('update:install', () => installAvailableUpdate());
-  ipcMain.handle('config:save', (_event, config) => writeConfig(config));
-  ipcMain.handle('account:verify', () => verifyRaAccount());
-  ipcMain.handle('account:disconnect', () => disconnectRaAccount());
-  ipcMain.handle('library:get', () => getAchievementLibrary());
-  ipcMain.handle('library:refresh', () => refreshAchievementLibrary());
-  ipcMain.handle('snapshot:get', (_event, forceRa) => getSnapshot(Boolean(forceRa)));
-  ipcMain.handle('ram:get', () => getRamSnapshot());
-  ipcMain.handle('overlay:toggle', (_event, force) => toggleOverlay(force));
-  ipcMain.handle('overlay:state', () => getOverlayState());
-  ipcMain.handle('overlay:update', (_event, patch) => updateOverlaySettings(patch));
-  ipcMain.handle('overlay:reset-preset', () => resetOverlayToPreset());
-  ipcMain.handle('shortcuts:state', () => publicShortcutState());
-  ipcMain.handle('shortcuts:reregister', () => registerGlobalShortcuts());
-  ipcMain.handle('shortcuts:update', (_event, patch) => updateShortcutSettings(patch));
-  ipcMain.on('overlay:resize-start', (event, payload) => beginOverlayResize(payload?.direction, payload?.screenX, payload?.screenY, event.sender));
-  ipcMain.on('overlay:resize-move', (event, payload) => moveOverlayResize(payload?.screenX, payload?.screenY, event.sender));
-  ipcMain.on('overlay:resize-end', (event) => endOverlayResize(event.sender));
-  ipcMain.on('overlay:move-start', (event, payload) => beginOverlayMove(payload?.screenX, payload?.screenY, event.sender));
-  ipcMain.on('overlay:move-move', (event, payload) => moveOverlayMove(payload?.screenX, payload?.screenY, event.sender));
-  ipcMain.on('overlay:move-end', (event) => endOverlayMove(event.sender));
+  registerIpcHandlers(ipcMain, {
+    getVersion: () => app.getVersion(),
+    getConfig: publicConfig,
+    checkForUpdates,
+    installAvailableUpdate,
+    saveConfig: writeConfig,
+    verifyAccount: verifyRaAccount,
+    disconnectAccount: disconnectRaAccount,
+    getLibrary: getAchievementLibrary,
+    refreshLibrary: refreshAchievementLibrary,
+    getSnapshot,
+    getRamSnapshot,
+    toggleOverlay,
+    getOverlayState,
+    updateOverlaySettings,
+    resetOverlayToPreset,
+    getShortcutState: publicShortcutState,
+    registerGlobalShortcuts,
+    updateShortcutSettings,
+    beginOverlayResize,
+    moveOverlayResize,
+    endOverlayResize,
+    beginOverlayMove,
+    moveOverlayMove,
+    endOverlayMove,
+  });
 
   createMainWindow();
   createOverlayWindow();

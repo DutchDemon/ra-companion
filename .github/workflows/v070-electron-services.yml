@@ -1,0 +1,163 @@
+name: v0.7 Electron Service Split
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [refactor/v0.7.0-electron-services]
+    paths:
+      - 'app/**'
+      - 'scripts/refactor-v070-electron-services.cjs'
+      - '.github/workflows/v070-electron-services.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v070-electron-services-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply deterministic service-boundary refactor
+        shell: pwsh
+        run: |
+          node scripts/refactor-v070-electron-services.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Electron boundary refactor failed.' }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Strict syntax, regression and production checks
+        working-directory: app
+        shell: pwsh
+        run: |
+          node --check electron/main.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'electron/main.cjs syntax check failed.' }
+          node --check electron/preload.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'electron/preload.cjs syntax check failed.' }
+          node --check electron/services/config-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'config-service syntax check failed.' }
+          node --check electron/services/update-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'update-service syntax check failed.' }
+          node --check electron/services/achievement-library-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'achievement-library-service syntax check failed.' }
+          node --check electron/ipc/register.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'IPC registration syntax check failed.' }
+
+          npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw "Regression tests failed with exit code $LASTEXITCODE." }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw "Production build failed with exit code $LASTEXITCODE." }
+
+      - name: Build NSIS installer
+        working-directory: app
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npx electron-builder --win nsis --x64 --publish never
+          if ($LASTEXITCODE -ne 0) { throw "electron-builder failed with exit code $LASTEXITCODE." }
+
+      - name: Verify packaged Windows icon and Defender scan
+        shell: pwsh
+        run: |
+          $appExe = Get-Item 'app/release/win-unpacked/RA Companion.exe' -ErrorAction Stop
+          Add-Type -AssemblyName System.Drawing
+          $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($appExe.FullName)
+          if (-not $icon) { throw 'Could not extract packaged RA Companion icon.' }
+          $bitmap = $icon.ToBitmap()
+          try {
+            $iconOut = Join-Path (Resolve-Path 'app/release') 'exe-icon.png'
+            $bitmap.Save($iconOut, [System.Drawing.Imaging.ImageFormat]::Png)
+            if ((Get-Item $iconOut).Length -lt 500) { throw 'Extracted icon is unexpectedly small.' }
+          } finally {
+            $bitmap.Dispose()
+            $icon.Dispose()
+          }
+
+          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.6.4.exe' } | Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer was not generated.' }
+          "INSTALLER_PATH=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "INSTALLER_NAME=$($installer.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+          $report = 'app/release/defender-scan.txt'
+          "Target: $($installer.FullName)" | Set-Content $report
+          $status = Get-MpComputerStatus -ErrorAction Stop
+          "AntivirusEnabled: $($status.AntivirusEnabled)" | Add-Content $report
+          "RealTimeProtectionEnabled: $($status.RealTimeProtectionEnabled)" | Add-Content $report
+          "AntivirusSignatureVersion: $($status.AntivirusSignatureVersion)" | Add-Content $report
+          if ($status.AntivirusEnabled) {
+            Start-MpScan -ScanType CustomScan -ScanPath $installer.FullName -ErrorAction Stop
+            Start-Sleep -Seconds 2
+            $hits = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object { ($_.Resources -join ';') -like "*$($installer.Name)*" })
+            if ($hits.Count -gt 0) { throw 'Microsoft Defender detected the installer.' }
+          }
+          "RESULT: NO DETECTION" | Add-Content $report
+
+      - name: Upload validation build
+        uses: actions/upload-artifact@v4
+        with:
+          name: v070-electron-service-validation
+          if-no-files-found: error
+          path: |
+            app/release/RA Companion Setup 0.6.4.exe
+            app/release/RA Companion Setup 0.6.4.exe.blockmap
+            app/release/latest.yml
+            app/release/defender-scan.txt
+            app/release/exe-icon.png
+
+  clamav:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: v070-electron-service-validation
+          path: artifact
+      - name: ClamAV scan
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clamav clamav-freshclam
+          sudo systemctl stop clamav-freshclam.service || true
+          sudo pkill -x freshclam || true
+          sudo freshclam
+          INSTALLER=$(find artifact -maxdepth 1 -type f -name 'RA Companion Setup 0.6.4.exe' -print -quit)
+          test -n "$INSTALLER"
+          clamscan "$INSTALLER" | tee artifact/clamav-scan.txt
+          test ${PIPESTATUS[0]} -eq 0
+
+  promote:
+    needs: [build, clamav]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/v0.7.0-electron-services
+          fetch-depth: 0
+      - name: Commit validated boundary refactor
+        shell: bash
+        run: |
+          node scripts/refactor-v070-electron-services.cjs
+          if git diff --quiet -- app/electron/main.cjs app/src/__tests__/v059.ra-authoritative-progress.test.ts; then
+            echo 'Canonical source already contains the validated boundary refactor.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/electron/main.cjs app/src/__tests__/v059.ra-authoritative-progress.test.ts
+          git commit -m 'refactor: promote validated v0.7 Electron boundaries'
+          git push origin HEAD:refactor/v0.7.0-electron-services
