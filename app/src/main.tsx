@@ -298,9 +298,12 @@ function Overlay() {
   const data = snapshot?.progress?.data;
   const achievements = useMemo(() => achievementArray(data), [data]);
   const serverPresenceMessage = snapshot?.presence?.ok && snapshot?.presence?.currentGameMatches ? snapshot.presence.message : '';
+  const officialPresenceMessage = snapshot?.presence?.source === 'rcheevos-runtime' ? serverPresenceMessage : '';
   const effectiveRam = liveRamProfile && (!snapshotProfile || liveRamProfile.key === activeProfile?.key) ? liveRam : snapshot?.ram;
   const fastRamPresence = ramPresenceMessage(effectiveRam, activeProfile);
-  const presenceMessage = fastRamPresence || serverPresenceMessage;
+  const fallbackSnapshotPresence = snapshot?.presence?.source === 'rcheevos-runtime' ? '' : serverPresenceMessage;
+  const presenceMessage = officialPresenceMessage || fastRamPresence || fallbackSnapshotPresence;
+  const presenceSource = officialPresenceMessage ? 'rcheevos-runtime' : fastRamPresence ? 'ram' : fallbackSnapshotPresence ? (snapshot?.presence?.source || 'retro-achievements') : 'none';
   const ramLive = Boolean(effectiveRam?.attached && !effectiveRam?.stale);
   const ramStage = effectiveRam?.stageName || effectiveRam?.stageCode || '';
   const ramRoom = typeof effectiveRam?.room === 'number' ? effectiveRam.room : null;
@@ -464,10 +467,18 @@ function Overlay() {
             {companion.context.boss && <div className="boss-chip">☠ {companion.context.boss}</div>}
           </div>
           <div className="overlay-badges">
+            {snapshot?.presence?.source === 'rcheevos-runtime' && <span className="pill rp-pill">RA RP</span>}
             {ramLive && <span className="pill ram-pill">RAM LIVE</span>}
             <span className="pill blue">{state.clickThrough ? 'PASS' : 'DRAG'}</span>
           </div>
         </header>
+
+        {gameActive && presenceMessage && (
+          <div className="v7-overlay-rich-presence" aria-live="polite">
+            <span>{snapshot?.presence?.source === 'rcheevos-runtime' ? 'RA RICH PRESENCE' : 'LIVE CONTEXT'}</span>
+            <b>{presenceMessage}</b>
+          </div>
+        )}
 
         {!gameActive ? (
           <div className="overlay-empty no-game-active">
@@ -604,8 +615,11 @@ function App() {
   const effectiveRam = liveRamProfile && (!snapshotProfile || liveRamProfile.key === activeProfile?.key) ? liveRam : snapshot?.ram;
   const ramLive = Boolean(effectiveRam?.attached && !effectiveRam?.stale);
   const serverPresenceMessage = snapshot?.presence?.ok && snapshot?.presence?.currentGameMatches ? snapshot.presence.message : '';
+  const officialPresenceMessage = snapshot?.presence?.source === 'rcheevos-runtime' ? serverPresenceMessage : '';
   const fastRamPresence = ramPresenceMessage(effectiveRam, activeProfile);
-  const presenceMessage = fastRamPresence || serverPresenceMessage;
+  const fallbackSnapshotPresence = snapshot?.presence?.source === 'rcheevos-runtime' ? '' : serverPresenceMessage;
+  const presenceMessage = officialPresenceMessage || fastRamPresence || fallbackSnapshotPresence;
+  const presenceSource = officialPresenceMessage ? 'rcheevos-runtime' : fastRamPresence ? 'ram' : fallbackSnapshotPresence ? (snapshot?.presence?.source || 'retro-achievements') : 'none';
   const ramRoom = typeof effectiveRam?.room === 'number' ? effectiveRam.room : null;
   const sessionStats = useMemo(() => liveSessionStats(effectiveRam, activeProfile), [effectiveRam?.timestamp, effectiveRam?.stageCode, effectiveRam?.currentHearts, effectiveRam?.maxHearts, effectiveRam?.poeSouls, effectiveRam?.goldenBugs, effectiveRam?.faronTears, effectiveRam?.storyFlags]);
 
@@ -935,6 +949,7 @@ function App() {
     ramRoom,
     serverPresenceMessage,
     presenceMessage,
+    presenceSource,
     companion,
     achievementStates,
     allMissables,

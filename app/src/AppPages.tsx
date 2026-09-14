@@ -155,6 +155,7 @@ export function Dashboard() {
     relevantAchievements,
     activeMissableCount,
     sessionStats,
+    presenceMessage,
     setPage,
     refresh,
   } = useAppView();
@@ -177,6 +178,12 @@ export function Dashboard() {
             <div className="v5-hero-copy">
               <h2>{heroTitle}</h2>
               <p>{gameActive ? `${activeProfile?.platform || snapshot?.game?.platform || 'Game'} · Hardcore achievement tracking` : 'Start Dolphin with a supported game and RA Companion will attach automatically.'}</p>
+              {gameActive && presenceMessage && (
+                <div className="v7-session-rich-presence" aria-live="polite">
+                  <span>{snapshot?.presence?.source === 'rcheevos-runtime' ? 'RA RICH PRESENCE' : 'LIVE CONTEXT'}</span>
+                  <b>{presenceMessage}</b>
+                </div>
+              )}
               <div className="v5-context-grid v6-session-grid">
                 <span>Current form <b>{gameActive ? formLabel : '—'}</b></span>
                 <span>Area / context <b>{gameActive ? contextLabel : '—'}</b></span>
@@ -246,6 +253,7 @@ export function CurrentGamePage() {
     companion,
     effectiveRam,
     presenceMessage,
+    presenceSource,
     ramRoom,
     ramLive,
     serverPresenceMessage,
@@ -272,7 +280,7 @@ export function CurrentGamePage() {
               <div><span>Bottles</span><b>{typeof effectiveRam?.bottleCount === 'number' ? effectiveRam.bottleCount : '—'}</b></div>
               <div><span>Player control</span><b>{effectiveRam?.playerControl === true ? 'Yes' : effectiveRam?.playerControl === false ? 'No' : '—'}</b></div>
               <div><span>Cutscene</span><b>{effectiveRam?.inCutscene === true ? 'Yes' : effectiveRam?.inCutscene === false ? 'No' : '—'}</b></div>
-              <div><span>Context source</span><b>{ramLive ? 'Dolphin RAM' : serverPresenceMessage ? 'RA Rich Presence' : 'Waiting'}</b></div>
+              <div><span>Context source</span><b>{presenceSource === 'rcheevos-runtime' ? 'Official RA · rcheevos' : presenceSource === 'ram' ? 'Dolphin RAM fallback' : presenceSource === 'retro-achievements' ? 'RA server profile' : 'Waiting'}</b></div>
             </div>
           </article>
           <article className="v5-panel">
