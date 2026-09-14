@@ -7,14 +7,14 @@ const root = path.resolve(__dirname, '..');
 // build until the validated renderer/profile changes are promoted to source.
 function patchFile(filePath, broken, fixed, label) {
   let source = fs.readFileSync(filePath, 'utf8');
+  if (source.includes(fixed)) {
+    console.log(`${label} already applied.`);
+    return;
+  }
   if (source.includes(broken)) {
     source = source.replace(broken, fixed);
     fs.writeFileSync(filePath, source);
     console.log(`Applied ${label}.`);
-    return;
-  }
-  if (source.includes(fixed)) {
-    console.log(`${label} already applied.`);
     return;
   }
   throw new Error(`Could not find expected source for ${label}: ${filePath}`);
@@ -26,12 +26,20 @@ const fixedMain = "return Boolean(getAchievementGuide(achievement, activeGameId)
 patchFile(mainPath, brokenMain, fixedMain, 'profile-backed deep-upcoming missable lookup');
 
 const registryPath = path.join(root, 'app', 'src', 'profiles', 'registry.ts');
-patchFile(
-  registryPath,
-  "export const TWILIGHT_PRINCESS_PROFILE: RendererGameProfile = Object.freeze({",
-  "const TWILIGHT_PRINCESS_GAME_CODES: readonly string[] = Object.freeze(['GZ2E01']);\n\nexport const TWILIGHT_PRINCESS_PROFILE: RendererGameProfile = Object.freeze({",
-  'typed Twilight Princess game-code constant',
-);
+const gameCodesDeclaration = "const TWILIGHT_PRINCESS_GAME_CODES: readonly string[] = Object.freeze(['GZ2E01']);";
+let registrySource = fs.readFileSync(registryPath, 'utf8');
+if (registrySource.includes(gameCodesDeclaration)) {
+  console.log('typed Twilight Princess game-code constant already applied.');
+} else {
+  const profileDeclaration = "export const TWILIGHT_PRINCESS_PROFILE: RendererGameProfile = Object.freeze({";
+  if (!registrySource.includes(profileDeclaration)) {
+    throw new Error('Could not find Twilight Princess profile declaration.');
+  }
+  registrySource = registrySource.replace(profileDeclaration, `${gameCodesDeclaration}\n\n${profileDeclaration}`);
+  fs.writeFileSync(registryPath, registrySource);
+  console.log('Applied typed Twilight Princess game-code constant.');
+}
+
 patchFile(
   registryPath,
   "  gameCodes: Object.freeze(['GZ2E01']),",
@@ -54,6 +62,10 @@ if (!finalMain.includes(fixedMain)) {
 }
 
 const finalRegistry = fs.readFileSync(registryPath, 'utf8');
+const declarationCount = finalRegistry.split(gameCodesDeclaration).length - 1;
+if (declarationCount !== 1) {
+  throw new Error(`Expected exactly one Twilight Princess game-code constant, found ${declarationCount}.`);
+}
 if (finalRegistry.includes('this.gameCodes.includes')) {
   throw new Error('Profile registry still relies on the loosely typed object this.gameCodes lookup.');
 }
