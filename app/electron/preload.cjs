@@ -23,6 +23,11 @@ contextBridge.exposeInMainWorld('raCompanion', {
   getSnapshot: (forceRa = false) => ipcRenderer.invoke('snapshot:get', forceRa),
   getRamState: () => ipcRenderer.invoke('ram:get'),
   getRuntimeStatus: () => ipcRenderer.invoke('runtime:status'),
+  getRuntimeAuthStatus: () => ipcRenderer.invoke('runtime:auth-status'),
+  loginRuntimeAccount: (password) => ipcRenderer.invoke('runtime:auth-login', { password }),
+  validateRuntimeAccount: () => ipcRenderer.invoke('runtime:auth-validate'),
+  disconnectRuntimeAccount: () => ipcRenderer.invoke('runtime:auth-disconnect'),
+  getRuntimeObserverStatus: () => ipcRenderer.invoke('runtime:observer-status'),
   onRamStateChanged: (callback) => {
     const handler = (_event, state) => callback(state);
     ipcRenderer.on('ram:state-changed', handler);
