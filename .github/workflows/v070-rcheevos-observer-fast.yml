@@ -1,0 +1,95 @@
+name: v0.7 rcheevos Observer Fast Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/v0.7.0-rcheevos-observer]
+    paths:
+      - 'native/rcheevos-runtime-helper/**'
+      - 'scripts/build-runtime-helper.ps1'
+      - '.github/workflows/v070-rcheevos-observer-fast.yml'
+
+concurrency:
+  group: v070-rcheevos-observer-fast-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  observer-helper:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build pinned rcheevos helper
+        shell: pwsh
+        run: |
+          ./scripts/build-runtime-helper.ps1 -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper build failed.' }
+
+      - name: Validate observer runtime self-test
+        shell: pwsh
+        run: |
+          $helper = (Resolve-Path 'app/tools/ra-runtime-helper.exe').Path
+          $raw = & $helper --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper self-test failed.' }
+          $self = $raw | ConvertFrom-Json
+          if (-not $self.ok) { throw 'Runtime helper self-test reported failure.' }
+          if (-not $self.runtimeParser) { throw 'rcheevos parser self-test failed.' }
+          if (-not $self.gameCubeMemoryMapping) { throw 'GameCube memory mapping self-test failed.' }
+          if (-not $self.observerRuntime) { throw 'Observer runtime measured self-test failed.' }
+          if (-not $self.readOnlyBridge) { throw 'Read-only memory contract was not advertised.' }
+          if ($self.rcheevosTag -ne 'v12.5.0') { throw "Unexpected rcheevos tag: $($self.rcheevosTag)" }
+          $raw | Set-Content 'observer-self-test.txt'
+
+      - name: Validate additive observer protocol without Dolphin
+        shell: pwsh
+        run: |
+          $helper = (Resolve-Path 'app/tools/ra-runtime-helper.exe').Path
+          $lines = @(
+            '{"id":1,"command":"activateAchievement","achievementId":700000001,"definition":"M:0xH0040AFC0>=255"}',
+            '{"id":2,"command":"achievementStatus","achievementId":700000001}',
+            '{"id":3,"command":"evaluateFrame"}',
+            '{"id":4,"command":"shutdown"}'
+          ) | & $helper
+          if ($LASTEXITCODE -ne 0) { throw 'Observer protocol smoke test failed.' }
+          $messages = @($lines | ForEach-Object { $_ | ConvertFrom-Json })
+          $ready = $messages | Where-Object { $_.type -eq 'ready' } | Select-Object -First 1
+          $activate = $messages | Where-Object { $_.command -eq 'activateAchievement' } | Select-Object -First 1
+          $status = $messages | Where-Object { $_.command -eq 'achievementStatus' } | Select-Object -First 1
+          $frame = $messages | Where-Object { $_.command -eq 'evaluateFrame' } | Select-Object -First 1
+          if (-not $ready.observerEvaluation) { throw 'Helper did not advertise observerEvaluation.' }
+          if (-not $activate.ok -or -not $activate.observerOnly) { throw 'Observer achievement activation failed.' }
+          if (-not $status.ok -or -not $status.measured -or $status.measuredTarget -ne 255) { throw 'Measured achievement status contract failed.' }
+          if ($frame.ok -ne $false) { throw 'evaluateFrame must fail safely when Dolphin is unattached.' }
+          $lines | Set-Content 'observer-protocol.txt'
+
+      - name: Microsoft Defender scan helper
+        shell: pwsh
+        run: |
+          $helper = (Resolve-Path 'app/tools/ra-runtime-helper.exe').Path
+          $status = Get-MpComputerStatus -ErrorAction Stop
+          if ($status.AntivirusEnabled) {
+            Start-MpScan -ScanType CustomScan -ScanPath $helper -ErrorAction Stop
+            Start-Sleep -Seconds 2
+            $hits = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object { ($_.Resources -join ';') -like '*ra-runtime-helper.exe*' })
+            if ($hits.Count -gt 0) { throw 'Microsoft Defender detected the observer helper.' }
+          }
+          'RESULT: NO DETECTION' | Set-Content 'observer-defender.txt'
+
+      - name: Prepare standalone test bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path observer-test | Out-Null
+          Copy-Item app/tools/ra-runtime-helper.exe observer-test/
+          Copy-Item native/rcheevos-runtime-helper/RCHEEVOS_OBSERVER_ONESHOT.ps1 observer-test/
+          Copy-Item native/rcheevos-runtime-helper/RCHEEVOS_OBSERVER_ONESHOT.bat observer-test/
+          Copy-Item observer-self-test.txt observer-test/
+          Copy-Item observer-protocol.txt observer-test/
+          Copy-Item observer-defender.txt observer-test/
+
+      - name: Upload standalone observer test
+        uses: actions/upload-artifact@v4
+        with:
+          name: v070-rcheevos-observer-fast-test
+          if-no-files-found: error
+          path: observer-test/**
