@@ -27,8 +27,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: app/package-lock.json
 
       - name: Validate observer game-definition session service
         shell: pwsh
@@ -42,8 +40,8 @@ jobs:
         shell: pwsh
         working-directory: app
         run: |
-          npm ci
-          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed.' }
+          npm install --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'npm install failed.' }
           npm run typecheck
           if ($LASTEXITCODE -ne 0) { throw 'TypeScript check failed.' }
           npm run test:regressions
