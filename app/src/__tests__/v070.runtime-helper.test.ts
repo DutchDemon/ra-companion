@@ -33,7 +33,7 @@ describe('v0.7 native rcheevos runtime helper', () => {
     expect(helper).toContain('strcmp(command, "status")');
     expect(helper).toContain('strcmp(command, "reset")');
     expect(helper).toContain('strcmp(command, "shutdown")');
-    expect(service).toContain("JSON.stringify({ id, command })");
+    expect(service).toContain('JSON.stringify({ id, command, ...payload })');
     expect(service).toContain("message.type === 'ready'");
     expect(service).toContain("message.type === 'response'");
   });
