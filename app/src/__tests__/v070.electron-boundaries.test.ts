@@ -38,6 +38,22 @@ describe('v0.7 Electron service boundaries', () => {
     expect(config).toContain('function publicConfig()');
   });
 
+  it('moves the persistent account-scoped achievement library behind a service boundary', () => {
+    const main = source('electron/main.cjs');
+    const library = source('electron/services/achievement-library-service.cjs');
+
+    expect(main).toContain("require('./services/achievement-library-service.cjs')");
+    expect(main).toContain('createAchievementLibraryService({');
+    expect(main).not.toContain('const ACHIEVEMENT_LIBRARY_VERSION = 1;');
+    expect(main).not.toContain('function achievementLibraryPath()');
+
+    expect(library).toContain("'achievement-library.json'");
+    expect(library).toContain('function rememberAchievementGame(username, gameId, data)');
+    expect(library).toContain('function getAchievementLibrary()');
+    expect(library).toContain('await getRaProgress(Number(game.gameId), true)');
+    expect(library).toContain("mainWindow.webContents.send('library:changed', library)");
+  });
+
   it('centralizes IPC channel registration behind one bootstrap call', () => {
     const main = source('electron/main.cjs');
     const ipc = source('electron/ipc/register.cjs');
