@@ -1,0 +1,187 @@
+name: v0.7 rcheevos Observer Full Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/v0.7.0-rcheevos-observer]
+    paths:
+      - '.github/workflows/v070-rcheevos-observer-full.yml'
+      - 'native/rcheevos-runtime-helper/**'
+      - 'app/electron/services/observer-runtime-service.cjs'
+      - 'app/electron/services/runtime-helper-service.cjs'
+      - 'app/src/__tests__/v070.runtime-helper.test.ts'
+      - 'app/src/__tests__/v070.observer-definition-layer.test.ts'
+      - 'scripts/build-runtime-helper.ps1'
+      - 'scripts/test-observer-runtime-service.cjs'
+      - 'scripts/test-observer-runtime-integration.cjs'
+
+concurrency:
+  group: v070-rcheevos-observer-full-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VALIDATION_VERSION: 0.7.0-dev.3
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate observer service behavior
+        shell: pwsh
+        run: |
+          node --check app/electron/services/observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer runtime service syntax check failed.' }
+          node scripts/test-observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer runtime service tests failed.' }
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Strict app type, syntax, regression and production checks
+        working-directory: app
+        shell: pwsh
+        run: |
+          node --check electron/main.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'electron/main.cjs syntax check failed.' }
+          node --check electron/services/runtime-helper-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'runtime-helper-service syntax check failed.' }
+          node --check electron/services/observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'observer-runtime-service syntax check failed.' }
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript typecheck failed.' }
+          npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed.' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Production build failed.' }
+
+      - name: Build pinned rcheevos helper
+        shell: pwsh
+        run: |
+          ./scripts/build-runtime-helper.ps1 -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper build failed.' }
+
+      - name: Validate observer loader against native helper
+        shell: pwsh
+        run: |
+          node scripts/test-observer-runtime-integration.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer/native definition-loader integration failed.' }
+          $helper = (Resolve-Path 'app/tools/ra-runtime-helper.exe').Path
+          $raw = & $helper --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper self-test failed.' }
+          $self = $raw | ConvertFrom-Json
+          if (-not $self.ok -or -not $self.runtimeParser -or -not $self.gameCubeMemoryMapping -or -not $self.observerRuntime -or -not $self.readOnlyBridge) {
+            throw 'Runtime helper observer self-test reported an invalid capability.'
+          }
+          if ($self.rcheevosTag -ne 'v12.5.0') { throw "Unexpected rcheevos tag: $($self.rcheevosTag)" }
+          $raw | Set-Content 'observer-full-self-test.txt'
+
+      - name: Stamp validation build version
+        working-directory: app
+        shell: pwsh
+        run: |
+          node -e "const fs=require('fs');const p=require('./package.json');p.version=process.env.VALIDATION_VERSION;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($pkg.version -ne $env:VALIDATION_VERSION) { throw 'Validation version stamp failed.' }
+
+      - name: Build NSIS observer validation installer
+        working-directory: app
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npx electron-builder --win nsis --x64 --publish never
+          if ($LASTEXITCODE -ne 0) { throw 'electron-builder failed.' }
+
+      - name: Verify packaged observer layer and Defender scan
+        shell: pwsh
+        run: |
+          $packagedRoot = 'app/release/win-unpacked/resources/app'
+          $packagedHelper = Join-Path $packagedRoot 'tools/ra-runtime-helper.exe'
+          $packagedRuntimeService = Join-Path $packagedRoot 'electron/services/runtime-helper-service.cjs'
+          $packagedObserverService = Join-Path $packagedRoot 'electron/services/observer-runtime-service.cjs'
+          foreach ($required in @($packagedHelper, $packagedRuntimeService, $packagedObserverService)) {
+            if (-not (Test-Path $required)) { throw "Packaged app is missing observer runtime file: $required" }
+          }
+
+          node --check $packagedRuntimeService
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged runtime-helper-service syntax check failed.' }
+          node --check $packagedObserverService
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged observer-runtime-service syntax check failed.' }
+
+          $raw = & $packagedHelper --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged runtime helper self-test failed.' }
+          $self = $raw | ConvertFrom-Json
+          if (-not $self.ok -or -not $self.observerRuntime -or -not $self.readOnlyBridge) {
+            throw 'Packaged helper does not expose the validated observer runtime.'
+          }
+
+          $packagedPackage = Get-Content (Join-Path $packagedRoot 'package.json') -Raw | ConvertFrom-Json
+          if ($packagedPackage.version -ne $env:VALIDATION_VERSION) {
+            throw "Packaged app version is $($packagedPackage.version), expected $env:VALIDATION_VERSION."
+          }
+
+          $expectedInstallerName = "RA Companion Setup $env:VALIDATION_VERSION.exe"
+          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq $expectedInstallerName } | Select-Object -First 1
+          if (-not $installer) { throw "NSIS validation installer was not generated: $expectedInstallerName" }
+
+          $report = 'app/release/observer-defender-scan.txt'
+          "Installer: $($installer.FullName)" | Set-Content $report
+          "Helper: $((Resolve-Path $packagedHelper).Path)" | Add-Content $report
+          $status = Get-MpComputerStatus -ErrorAction Stop
+          "AntivirusEnabled: $($status.AntivirusEnabled)" | Add-Content $report
+          "AntivirusSignatureVersion: $($status.AntivirusSignatureVersion)" | Add-Content $report
+          if ($status.AntivirusEnabled) {
+            Start-MpScan -ScanType CustomScan -ScanPath $installer.FullName -ErrorAction Stop
+            Start-MpScan -ScanType CustomScan -ScanPath (Resolve-Path $packagedHelper).Path -ErrorAction Stop
+            Start-Sleep -Seconds 2
+            $hits = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
+              ($_.Resources -join ';') -like "*$($installer.Name)*" -or ($_.Resources -join ';') -like '*ra-runtime-helper.exe*'
+            })
+            if ($hits.Count -gt 0) { throw 'Microsoft Defender detected an observer validation artifact.' }
+          }
+          'RESULT: NO DETECTION' | Add-Content $report
+
+      - name: Upload full observer validation build
+        uses: actions/upload-artifact@v4
+        with:
+          name: v070-rcheevos-observer-full-validation
+          if-no-files-found: error
+          path: |
+            app/release/RA Companion Setup 0.7.0-dev.3.exe
+            app/release/RA Companion Setup 0.7.0-dev.3.exe.blockmap
+            app/release/latest.yml
+            app/release/observer-defender-scan.txt
+            app/tools/ra-runtime-helper.exe
+            observer-full-self-test.txt
+
+  clamav:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: v070-rcheevos-observer-full-validation
+          path: artifact
+      - name: ClamAV scan
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clamav clamav-freshclam
+          sudo systemctl stop clamav-freshclam.service || true
+          sudo pkill -x freshclam || true
+          sudo freshclam
+          INSTALLER=$(find artifact -type f -name 'RA Companion Setup 0.7.0-dev.3.exe' -print -quit)
+          HELPER=$(find artifact -type f -name 'ra-runtime-helper.exe' -print -quit)
+          test -n "$INSTALLER"
+          test -n "$HELPER"
+          clamscan "$INSTALLER" "$HELPER" | tee artifact/clamav-scan.txt
+          test ${PIPESTATUS[0]} -eq 0
