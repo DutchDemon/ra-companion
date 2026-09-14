@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 
 describe('v0.5.9 authoritative RetroAchievements progress', () => {
   const electron = readFileSync(resolve(process.cwd(), 'electron/main.cjs'), 'utf8');
+  const ipc = readFileSync(resolve(process.cwd(), 'electron/ipc/register.cjs'), 'utf8');
   const preload = readFileSync(resolve(process.cwd(), 'electron/preload.cjs'), 'utf8');
   const ui = readFileSync(resolve(process.cwd(), 'src/main.tsx'), 'utf8');
   const types = readFileSync(resolve(process.cwd(), 'src/global.d.ts'), 'utf8');
@@ -21,7 +22,7 @@ describe('v0.5.9 authoritative RetroAchievements progress', () => {
   it('supports a forced authoritative RA refresh end-to-end', () => {
     expect(electron).toContain('async function getRaProgress(gameId = TWILIGHT_PRINCESS_GAME_ID, force = false)');
     expect(electron).toContain('getRaProgress(gameId, forceRa)');
-    expect(electron).toContain("ipcMain.handle('snapshot:get', (_event, forceRa) => getSnapshot(Boolean(forceRa)))");
+    expect(ipc).toContain("ipcMain.handle('snapshot:get', (_event, forceRa) => handlers.getSnapshot(Boolean(forceRa)))");
     expect(preload).toContain("getSnapshot: (forceRa = false) => ipcRenderer.invoke('snapshot:get', forceRa)");
     expect(types).toContain('getSnapshot: (forceRa?: boolean) => Promise<Snapshot>;');
     expect(ui).toContain('async function refresh(forceRa = false)');
