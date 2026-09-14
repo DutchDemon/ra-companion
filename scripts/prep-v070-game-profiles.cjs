@@ -43,5 +43,17 @@ if (source.includes(oldBlock)) {
   throw new Error('Could not find achievement routing block to migrate.');
 }
 
+// Normalize the state-engine call before the main migration. The source has
+// moved between formatter layouts over time; a regex keeps this step stable
+// while still requiring the final migration to verify the profile boundary.
+source = source.replace(
+  /\bbuildTwilightAchievementStates\s*\(/g,
+  'buildProfileAchievementStates(activeProfile, ',
+);
+
+if (!source.includes('buildProfileAchievementStates(activeProfile,')) {
+  throw new Error('Could not route the achievement state engine through the active profile.');
+}
+
 fs.writeFileSync(file, source, 'utf8');
-console.log('Prepared profile-aware achievement routing.');
+console.log('Prepared profile-aware achievement routing and state engine.');
