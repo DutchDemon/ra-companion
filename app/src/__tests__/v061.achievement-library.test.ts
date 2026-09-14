@@ -9,18 +9,19 @@ function source(relative: string) {
 describe('v0.6.1 persistent multi-game achievement library', () => {
   it('keeps the official RA game-progress endpoint authoritative while persisting it per account/game', () => {
     const main = source('electron/main.cjs');
+    const library = source('electron/services/achievement-library-service.cjs');
     expect(main).toContain('const progress = baseProgress;');
     expect(main).not.toContain('const progress = mergeRecentHardcoreUnlocks(baseProgress, recent, gameId);');
-    expect(main).toContain("path.join(app.getPath('userData'), 'achievement-library.json')");
     expect(main).toContain('rememberAchievementGame(config.username, gameId, result.data)');
-    expect(main).toContain('achievementLibraryAccountKey(username)');
+    expect(library).toContain("path.join(app.getPath('userData'), 'achievement-library.json')");
+    expect(library).toContain('achievementLibraryAccountKey(username)');
   });
 
   it('does not expose a previous account library before the currently configured account is verified', () => {
-    const main = source('electron/main.cjs');
-    expect(main).toContain('current.username.toLowerCase() === current.verifiedUsername.toLowerCase()');
-    expect(main).toContain("return { version: ACHIEVEMENT_LIBRARY_VERSION, username: '', games: [] }");
-    expect(main).toContain('broadcastAchievementLibraryChanged();');
+    const library = source('electron/services/achievement-library-service.cjs');
+    expect(library).toContain('current.username.toLowerCase() === current.verifiedUsername.toLowerCase()');
+    expect(library).toContain("return { version: ACHIEVEMENT_LIBRARY_VERSION, username: '', games: [] }");
+    expect(library).toContain('broadcastAchievementLibraryChanged();');
   });
 
   it('merges Missables into Achievements and groups remembered games behind collapsible headers', () => {
