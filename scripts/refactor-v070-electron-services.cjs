@@ -20,18 +20,53 @@ if (!main.includes("require('./services/update-service.cjs')")) {
   );
 }
 
+if (!main.includes("require('./services/config-service.cjs')")) {
+  const updateImport = "const { createUpdateService } = require('./services/update-service.cjs');";
+  requireMatch(main.includes(updateImport), 'Could not find update-service import anchor.');
+  main = main.replace(
+    updateImport,
+    `${updateImport}\nconst { createConfigService } = require('./services/config-service.cjs');`,
+  );
+}
+
 if (main.includes('let appUpdater = null;')) {
   const updaterBlock = /let appUpdater = null;\r?\n[\s\S]*?\r?\nconst TWILIGHT_PRINCESS_GAME_ID = 3934;/;
   requireMatch(updaterBlock.test(main), 'Could not isolate legacy updater implementation.');
   main = main.replace(updaterBlock, 'const TWILIGHT_PRINCESS_GAME_ID = 3934;');
 }
 
+if (main.includes('function configPath()')) {
+  const configPathBlock = /function configPath\(\) \{\r?\n  return path\.join\(app\.getPath\('userData'\), 'config\.json'\);\r?\n\}\r?\n\r?\n/;
+  requireMatch(configPathBlock.test(main), 'Could not isolate configPath implementation.');
+  main = main.replace(configPathBlock, '');
+}
+
+if (main.includes('function clampOpacity(value)')) {
+  const configPrimitiveBlock = /function clampOpacity\(value\) \{[\s\S]*?\r?\nfunction resetRaCaches\(\) \{/;
+  requireMatch(configPrimitiveBlock.test(main), 'Could not isolate configuration primitive block.');
+  main = main.replace(configPrimitiveBlock, 'function resetRaCaches() {');
+}
+
+if (main.includes('function publicConfig()')) {
+  const publicConfigBlock = /function publicConfig\(\) \{[\s\S]*?\r?\n\}\r?\n\r?\nfunction getOverlayState\(\) \{/;
+  requireMatch(publicConfigBlock.test(main), 'Could not isolate publicConfig implementation.');
+  main = main.replace(publicConfigBlock, 'function getOverlayState() {');
+}
+
+const shortcutTimer = 'let shortcutHealthTimer = null;';
+requireMatch(main.includes(shortcutTimer), 'Could not find shortcut-health anchor.');
+
+if (!main.includes('createConfigService({')) {
+  const configInit = `${shortcutTimer}\n\nconst {\n  normalizeBounds,\n  normalizeOverlay,\n  normalizeShortcuts,\n  readRawConfig,\n  readConfig,\n  persistConfig,\n  publicConfig,\n} = createConfigService({\n  app,\n  safeStorage,\n  defaultOverlay: DEFAULT_OVERLAY,\n  minOverlayWidth: MIN_OVERLAY_WIDTH,\n  minOverlayHeight: MIN_OVERLAY_HEIGHT,\n  defaultShortcuts: DEFAULT_SHORTCUTS,\n});`;
+  main = main.replace(shortcutTimer, configInit);
+}
+
 if (!main.includes('createUpdateService({')) {
-  const shortcutTimer = 'let shortcutHealthTimer = null;';
-  requireMatch(main.includes(shortcutTimer), 'Could not find shortcut-health anchor.');
+  const configInitEnd = '  defaultShortcuts: DEFAULT_SHORTCUTS,\n});';
+  requireMatch(main.includes(configInitEnd), 'Could not find config-service initialization anchor.');
   main = main.replace(
-    shortcutTimer,
-    `${shortcutTimer}\n\nconst { checkForUpdates, installAvailableUpdate } = createUpdateService({\n  app,\n  getMainWindow: () => mainWindow,\n});`,
+    configInitEnd,
+    `${configInitEnd}\n\nconst { checkForUpdates, installAvailableUpdate } = createUpdateService({\n  app,\n  getMainWindow: () => mainWindow,\n});`,
   );
 }
 
@@ -43,12 +78,17 @@ if (main.includes("ipcMain.handle('app:version'")) {
 }
 
 requireMatch(main.includes("const { createUpdateService } = require('./services/update-service.cjs');"), 'Update service import missing after transform.');
+requireMatch(main.includes("const { createConfigService } = require('./services/config-service.cjs');"), 'Config service import missing after transform.');
 requireMatch(main.includes("const { registerIpcHandlers } = require('./ipc/register.cjs');"), 'IPC boundary import missing after transform.');
 requireMatch(main.includes('createUpdateService({'), 'Update service initialization missing after transform.');
+requireMatch(main.includes('createConfigService({'), 'Config service initialization missing after transform.');
 requireMatch(main.includes('registerIpcHandlers(ipcMain, {'), 'IPC registration boundary missing after transform.');
 requireMatch(!main.includes("const { autoUpdater } = require('electron-updater');"), 'Legacy updater import remains in main.');
 requireMatch(!main.includes('let appUpdater = null;'), 'Legacy updater state remains in main.');
 requireMatch(!main.includes("ipcMain.handle('app:version'"), 'Direct IPC registration remains in main.');
+requireMatch(!main.includes('function configPath()'), 'Legacy configPath remains in main.');
+requireMatch(!main.includes('function clampOpacity(value)'), 'Legacy config normalization remains in main.');
+requireMatch(!main.includes('function publicConfig()'), 'Legacy publicConfig remains in main.');
 
 fs.writeFileSync(mainPath, main, 'utf8');
 
@@ -67,4 +107,4 @@ requireMatch(v059.includes("const ipc = readFileSync(resolve(process.cwd(), 'ele
 requireMatch(v059.includes("expect(ipc).toContain(\"ipcMain.handle('snapshot:get'"), 'v0.5.9 forced-refresh IPC assertion was not migrated.');
 fs.writeFileSync(v059Path, v059, 'utf8');
 
-console.log('Applied v0.7 Electron update-service and IPC boundary refactor.');
+console.log('Applied v0.7 Electron config/update-service and IPC boundary refactor.');
