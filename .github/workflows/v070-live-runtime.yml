@@ -1,0 +1,99 @@
+name: v0.7 Live Runtime Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/v0.7.0-live-runtime]
+    paths:
+      - 'app/electron/services/observer-runtime-service.cjs'
+      - 'app/electron/services/ra-runtime-data-service.cjs'
+      - 'app/electron/main.cjs'
+      - 'app/src/**'
+      - 'native/rcheevos-runtime-helper/**'
+      - 'scripts/build-runtime-helper.ps1'
+      - 'scripts/test-observer-runtime-service.cjs'
+      - 'scripts/test-observer-runtime-integration.cjs'
+      - '.github/workflows/v070-live-runtime.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/electron/services/observer-runtime-service.cjs'
+      - 'app/electron/services/ra-runtime-data-service.cjs'
+      - 'app/electron/main.cjs'
+      - 'app/src/**'
+      - 'native/rcheevos-runtime-helper/**'
+      - 'scripts/build-runtime-helper.ps1'
+      - 'scripts/test-observer-runtime-service.cjs'
+      - 'scripts/test-observer-runtime-integration.cjs'
+      - '.github/workflows/v070-live-runtime.yml'
+
+concurrency:
+  group: v070-live-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate live observer service
+        shell: pwsh
+        run: |
+          node --check app/electron/services/observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer runtime service syntax check failed.' }
+          node scripts/test-observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer live runtime tests failed.' }
+
+      - name: Guard observer-only authority boundary
+        shell: pwsh
+        run: |
+          $observer = Get-Content 'app/electron/services/observer-runtime-service.cjs' -Raw
+          foreach ($required in @('DEFAULT_LIVE_INTERVAL_MS = 16', "officialCompletionAuthority: 'retroachievements-server'", 'sampleLiveFrame', 'startLiveEvaluation', 'stopLiveEvaluation')) {
+            if (-not $observer.Contains($required)) { throw "Live runtime contract missing: $required" }
+          }
+          $runtimeData = Get-Content 'app/electron/services/ra-runtime-data-service.cjs' -Raw
+          foreach ($forbidden in @("r: 'startsession'", "r: 'ping'", "r: 'awardachievement'", "r: 'submitlbentry'")) {
+            if ($runtimeData.Contains($forbidden)) { throw "Forbidden RA submission/session endpoint found: $forbidden" }
+          }
+          $main = Get-Content 'app/electron/main.cjs' -Raw
+          if (-not $main.Contains('const progress = baseProgress;')) { throw 'Official RA completion authority invariant is missing.' }
+          if ($main.Contains('runtimeProgress =')) { throw 'Local observer progress must not replace official RA progress.' }
+
+      - name: Validate app regressions and production build
+        working-directory: app
+        shell: pwsh
+        run: |
+          npm install --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'npm install failed.' }
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript check failed.' }
+          npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed.' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Production build failed.' }
+
+      - name: Build pinned rcheevos helper
+        shell: pwsh
+        run: |
+          ./scripts/build-runtime-helper.ps1 -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper build failed.' }
+
+      - name: Validate Node to native observer path
+        shell: pwsh
+        run: |
+          node scripts/test-observer-runtime-integration.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer/native definition-loader integration failed.' }
+          $helper = (Resolve-Path 'app/tools/ra-runtime-helper.exe').Path
+          $raw = & $helper --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper self-test failed.' }
+          $self = $raw | ConvertFrom-Json
+          if (-not $self.ok -or -not $self.observerRuntime -or -not $self.readOnlyBridge) {
+            throw 'Runtime helper observer/read-only self-test failed.'
+          }
+          if ($self.rcheevosTag -ne 'v12.5.0') { throw "Unexpected rcheevos tag: $($self.rcheevosTag)" }
