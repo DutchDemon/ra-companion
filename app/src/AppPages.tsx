@@ -52,27 +52,6 @@ export function AchievementRow({ achievement, compact = false, gameId = null }: 
   );
 }
 
-function LiveAchievementCounterList({ items, compact = false }: { items: Array<{ achievement: any; counter: any }>; compact?: boolean }) {
-  if (!items.length) return null;
-  return (
-    <div className={`v7-live-counter-list ${compact ? 'compact' : ''}`}>
-      {items.map(({ achievement, counter }) => {
-        const pct = Math.max(0, Math.min(100, (Number(counter.current) / Number(counter.target)) * 100));
-        return (
-          <div className="v7-live-counter-card" key={achievementId(achievement)}>
-            <div className="v7-live-counter-row">
-              <b>{achievement.Title || achievement.title}</b>
-              <strong>{counter.current} / {counter.target}</strong>
-            </div>
-            <div className="v7-live-counter-track"><i style={{ width: `${pct}%` }} /></div>
-            <small>{counter.source === 'rcheevos' ? 'RA measured · rcheevos' : counter.source === 'ram' ? 'RAM live fallback' : 'RA progress'}</small>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 export function MissableRow({ achievement }: { achievement: any }) {
   const { missableState, setSelectedMissable, getAchievementGuide } = useAppView();
   const guide = getAchievementGuide(achievement);
@@ -177,7 +156,6 @@ export function Dashboard() {
     activeMissableCount,
     sessionStats,
     presenceMessage,
-    liveAchievementCounters,
     setPage,
     refresh,
   } = useAppView();
@@ -217,12 +195,6 @@ export function Dashboard() {
               </div>
             </div>
           </div>
-          {gameActive && liveAchievementCounters.length > 0 && (
-            <div className="v7-session-counter-block">
-              <div className="v7-live-counter-heading"><span>LIVE ACHIEVEMENT PROGRESS</span><small>Read-only measured state</small></div>
-              <LiveAchievementCounterList items={liveAchievementCounters.slice(0, 3)} compact />
-            </div>
-          )}
           <div className="v5-session-chips">
             <span className={snapshot?.dolphin.running ? 'good' : ''}>● {snapshot?.dolphin.running ? 'Dolphin connected' : 'Dolphin offline'}</span>
             <span className={ramLive ? 'good' : ''}>● {ramLive ? 'Live tracking active' : 'RAM waiting'}</span>
@@ -286,7 +258,6 @@ export function CurrentGamePage() {
     ramLive,
     serverPresenceMessage,
     currentNextAchievements,
-    liveAchievementCounters,
   } = useAppView();
   return (
     <>
@@ -312,12 +283,6 @@ export function CurrentGamePage() {
               <div><span>Context source</span><b>{presenceSource === 'rcheevos-runtime' ? 'Official RA · rcheevos' : presenceSource === 'ram' ? 'Dolphin RAM fallback' : presenceSource === 'retro-achievements' ? 'RA server profile' : 'Waiting'}</b></div>
             </div>
           </article>
-          {gameActive && liveAchievementCounters.length > 0 && (
-            <article className="v5-panel v7-live-progress-panel">
-              <div className="v5-card-heading"><div><div className="v5-section-label">LIVE ACHIEVEMENT PROGRESS</div><h3>Measured directly from the local read-only rcheevos runtime when available.</h3></div><span className="v5-status-pill complete">LIVE</span></div>
-              <LiveAchievementCounterList items={liveAchievementCounters} />
-            </article>
-          )}
           <article className="v5-panel">
             <div className="v5-section-label">CURRENT & NEXT</div>
             <div className="v5-achievement-list">{currentNextAchievements.slice(0, 10).map((a: any) => <AchievementRow key={achievementId(a)} achievement={a} />)}</div>

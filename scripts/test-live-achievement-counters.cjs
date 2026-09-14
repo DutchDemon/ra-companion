@@ -29,11 +29,11 @@ assert(types.includes('measuredAchievementCount: number;'), 'Measured achievemen
 assert(tpState.includes("source: 'rcheevos' | 'ram' | 'ra';"), 'Achievement progress type does not accept rcheevos counter data.');
 
 assert(renderer.includes('snapshot?.runtime?.live'), 'Renderer does not consume live observer status data.');
-assert(renderer.includes('selectLiveAchievementCounters'), 'Live counter selection is missing.');
-assert(renderer.includes("counter.source === 'rcheevos' ? 'RA measured · rcheevos'"), 'Visible rcheevos counter provenance is missing.');
-assert(renderer.includes('achievementCounter(achievement, ram, profile || null, runtimeLive) || state?.progress'), 'Overlay must prefer live rcheevos counters over older mapped progress.');
-assert(pages.includes('LIVE ACHIEVEMENT PROGRESS'), 'Dashboard/Current Game live counter presentation is missing.');
-assert(pages.includes('achievementCounter(achievement, isCurrentGame ? effectiveRam : undefined, isCurrentGame) || state.progress'), 'Achievement rows do not prefer live current-game counters.');
+assert(!renderer.includes('selectLiveAchievementCounters'), 'Dedicated live counter widget selection should be removed.');
+assert(!renderer.includes('v7-overlay-live-counters'), 'Dedicated overlay live-progress widget should be removed.');
+assert(!pages.includes('LIVE ACHIEVEMENT PROGRESS'), 'Dedicated Dashboard/Current Game live-progress presentation should be removed.');
+assert(renderer.includes('achievementCounter(achievement, ram, profile || null, runtimeLive) || state?.progress'), 'Relevant overlay achievements must still prefer live rcheevos counters over older mapped progress.');
+assert(pages.includes('achievementCounter(achievement, isCurrentGame ? effectiveRam : undefined, isCurrentGame) || state.progress'), 'Achievement rows must still prefer live current-game counters.');
 
 for (const forbidden of ["r: 'startsession'", "r: 'ping'", "r: 'awardachievement'", "r: 'submitlbentry'"]) {
   assert(!runtimeData.includes(forbidden), `Forbidden RA runtime endpoint found: ${forbidden}`);
