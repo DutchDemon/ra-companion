@@ -10,6 +10,7 @@ function registerIpcHandlers(ipcMain, handlers) {
   ipcMain.handle('library:refresh', () => handlers.refreshLibrary());
   ipcMain.handle('snapshot:get', (_event, forceRa) => handlers.getSnapshot(Boolean(forceRa)));
   ipcMain.handle('ram:get', () => handlers.getRamSnapshot());
+  ipcMain.handle('runtime:status', () => handlers.getRuntimeStatus());
   ipcMain.handle('overlay:toggle', (_event, force) => handlers.toggleOverlay(force));
   ipcMain.handle('overlay:state', () => handlers.getOverlayState());
   ipcMain.handle('overlay:update', (_event, patch) => handlers.updateOverlaySettings(patch));
