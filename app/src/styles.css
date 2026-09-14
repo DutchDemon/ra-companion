@@ -1111,5 +1111,5 @@ body {
 .v7-overlay-counter strong { color: #6ee7ff; font-size: 9px; white-space: nowrap; }
 .v7-overlay-counter > small { color: #708392; font-size: 8px; }
 .overlay-shell.compact .v7-overlay-live-counters { padding: 6px 7px; gap: 5px; }
-.overlay-shell.compact .v7-overlay-live-counters .v7-overlay-counter:nth-of-type(n+3) { display: none; }
+.overlay-shell.compact .v7-overlay-live-counters .v7-overlay-counter:nth-child(n+4) { display: none; }
 @media (max-width: 1180px) { .v7-live-counter-list.compact { grid-template-columns: 1fr; } }
