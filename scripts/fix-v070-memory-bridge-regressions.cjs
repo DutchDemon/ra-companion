@@ -2,26 +2,56 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
-const mainPath = path.join(root, 'app', 'src', 'main.tsx');
-let source = fs.readFileSync(mainPath, 'utf8');
 
-const broken = "return Boolean(getTwilightMissableGuide(achievement) && mapped?.coverage === 'deep' && mapped.kind === 'upcoming' && !earnedHardcore(achievement));";
-const fixed = "return Boolean(getAchievementGuide(achievement, activeGameId) && mapped?.coverage === 'deep' && mapped.kind === 'upcoming' && !earnedHardcore(achievement));";
-
-if (source.includes(broken)) {
-  source = source.replace(broken, fixed);
-  fs.writeFileSync(mainPath, source);
-  console.log('Fixed deep-upcoming missable lookup to use the profile registry.');
-} else if (source.includes(fixed) && !source.includes('getTwilightMissableGuide(achievement)')) {
-  console.log('Renderer regression fix already applied.');
-} else {
-  throw new Error('Could not find the expected deep-upcoming missable lookup in app/src/main.tsx.');
+function patchFile(filePath, broken, fixed, label) {
+  let source = fs.readFileSync(filePath, 'utf8');
+  if (source.includes(broken)) {
+    source = source.replace(broken, fixed);
+    fs.writeFileSync(filePath, source);
+    console.log(`Applied ${label}.`);
+    return;
+  }
+  if (source.includes(fixed)) {
+    console.log(`${label} already applied.`);
+    return;
+  }
+  throw new Error(`Could not find expected source for ${label}: ${filePath}`);
 }
 
-const finalSource = fs.readFileSync(mainPath, 'utf8');
-if (finalSource.includes('getTwilightMissableGuide(achievement)')) {
+const mainPath = path.join(root, 'app', 'src', 'main.tsx');
+const brokenMain = "return Boolean(getTwilightMissableGuide(achievement) && mapped?.coverage === 'deep' && mapped.kind === 'upcoming' && !earnedHardcore(achievement));";
+const fixedMain = "return Boolean(getAchievementGuide(achievement, activeGameId) && mapped?.coverage === 'deep' && mapped.kind === 'upcoming' && !earnedHardcore(achievement));";
+patchFile(mainPath, brokenMain, fixedMain, 'profile-backed deep-upcoming missable lookup');
+
+const registryPath = path.join(root, 'app', 'src', 'profiles', 'registry.ts');
+patchFile(
+  registryPath,
+  "export const TWILIGHT_PRINCESS_PROFILE: RendererGameProfile = Object.freeze({",
+  "const TWILIGHT_PRINCESS_GAME_CODES: readonly string[] = Object.freeze(['GZ2E01']);\n\nexport const TWILIGHT_PRINCESS_PROFILE: RendererGameProfile = Object.freeze({",
+  'typed Twilight Princess game-code constant',
+);
+patchFile(
+  registryPath,
+  "  gameCodes: Object.freeze(['GZ2E01']),",
+  '  gameCodes: TWILIGHT_PRINCESS_GAME_CODES,',
+  'profile game-code constant wiring',
+);
+patchFile(
+  registryPath,
+  "    return Boolean(ram?.attached && !ram?.stale && this.gameCodes.includes(String(ram?.gameCode || '').trim()));",
+  "    return Boolean(ram?.attached && !ram?.stale && TWILIGHT_PRINCESS_GAME_CODES.includes(String(ram?.gameCode || '').trim()));",
+  'type-safe profile RAM matcher',
+);
+
+const finalMain = fs.readFileSync(mainPath, 'utf8');
+if (finalMain.includes('getTwilightMissableGuide(achievement)')) {
   throw new Error('Renderer still contains the stale getTwilightMissableGuide call.');
 }
-if (!finalSource.includes(fixed)) {
+if (!finalMain.includes(fixedMain)) {
   throw new Error('Renderer did not retain the generic profile-backed missable lookup.');
+}
+
+const finalRegistry = fs.readFileSync(registryPath, 'utf8');
+if (finalRegistry.includes('this.gameCodes.includes')) {
+  throw new Error('Profile registry still relies on the loosely typed object this.gameCodes lookup.');
 }
