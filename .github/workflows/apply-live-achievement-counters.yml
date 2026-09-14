@@ -1,0 +1,37 @@
+name: Apply Live Achievement Counters
+
+on:
+  push:
+    branches: [feature/v0.7.0-live-achievement-counters]
+    paths:
+      - '.github/workflows/apply-live-achievement-counters.yml'
+      - 'scripts/apply-live-achievement-counters.py'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/v0.7.0-live-achievement-counters
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply exact live counter patch
+        run: python scripts/apply-live-achievement-counters.py
+      - name: Commit intended product files
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config core.whitespace cr-at-eol
+          git diff --check
+          git add app/electron/main.cjs app/src/global.d.ts app/src/profiles/registry.ts app/src/main.tsx app/src/AppPages.tsx app/src/styles.css
+          git add -u .github/workflows/apply-live-achievement-counters.yml scripts/apply-live-achievement-counters.py
+          git diff --cached --check
+          git commit -m 'feat: surface live measured achievement counters'
+          git push origin HEAD:feature/v0.7.0-live-achievement-counters
