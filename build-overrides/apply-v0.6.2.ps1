@@ -4,6 +4,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $appRoot = Join-Path $repoRoot 'app'
 $packagePath = Join-Path $appRoot 'package.json'
 $buildDir = Join-Path $appRoot 'build'
+$sourceIconPath = Join-Path $buildDir 'ra-icon-square.webp'
 $iconPath = Join-Path $buildDir 'ra-icon.png'
 
 if (-not (Test-Path $packagePath)) {
@@ -12,14 +13,32 @@ if (-not (Test-Path $packagePath)) {
 
 New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
 
-# Official RetroAchievements logo, pinned to the RAWeb revision used when this
-# RA Companion release was prepared. This avoids silently changing branding if
-# RAWeb replaces the asset later.
-$iconUrl = 'https://raw.githubusercontent.com/RetroAchievements/RAWeb/56cd88e57c6dc6994e130a918e3967f9b74e9eb9/public/assets/images/ra-icon-mail.png'
-Invoke-WebRequest -Uri $iconUrl -OutFile $iconPath -UseBasicParsing
+# Official RetroAchievements square logo, pinned to the RAWeb revision used
+# when this RA Companion release was prepared. Only format conversion/resizing
+# is performed; the artwork itself is not altered.
+$iconUrl = 'https://raw.githubusercontent.com/RetroAchievements/RAWeb/56cd88e57c6dc6994e130a918e3967f9b74e9eb9/public/assets/images/ra-icon-square.webp'
+Invoke-WebRequest -Uri $iconUrl -OutFile $sourceIconPath -UseBasicParsing
+
+if (-not (Test-Path $sourceIconPath)) {
+    throw 'RetroAchievements icon download failed.'
+}
+
+# Pillow's Windows wheel includes WebP support and gives us a deterministic
+# 512x512 PNG that electron-builder can turn into the executable icon.
+& python -c "import PIL" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    & python -m pip install --disable-pip-version-check --quiet Pillow
+    if ($LASTEXITCODE -ne 0) { throw 'Could not install Pillow for icon conversion.' }
+}
+
+$srcEscaped = $sourceIconPath.Replace("'", "''")
+$dstEscaped = $iconPath.Replace("'", "''")
+$python = "from PIL import Image; src=Image.open(r'$srcEscaped').convert('RGBA'); assert src.width == src.height, f'RA icon is not square: {src.width}x{src.height}'; src.resize((512,512), Image.Resampling.LANCZOS).save(r'$dstEscaped', format='PNG')"
+& python -c $python
+if ($LASTEXITCODE -ne 0) { throw 'RetroAchievements icon conversion failed.' }
 
 if (-not (Test-Path $iconPath)) {
-    throw 'RetroAchievements icon download failed.'
+    throw 'Converted RetroAchievements PNG icon is missing.'
 }
 
 $bytes = [IO.File]::ReadAllBytes($iconPath)
@@ -29,20 +48,17 @@ if ($bytes.Length -lt 1024) {
 }
 for ($i = 0; $i -lt $pngSignature.Length; $i++) {
     if ($bytes[$i] -ne $pngSignature[$i]) {
-        throw 'Downloaded RetroAchievements icon is not a PNG file.'
+        throw 'Converted RetroAchievements icon is not a PNG file.'
     }
 }
 
 Add-Type -AssemblyName System.Drawing
 $image = [System.Drawing.Image]::FromFile($iconPath)
 try {
-    if ($image.Width -lt 256 -or $image.Height -lt 256) {
-        throw "RetroAchievements icon is too small for a Windows application icon: $($image.Width)x$($image.Height)."
+    if ($image.Width -ne 512 -or $image.Height -ne 512) {
+        throw "RetroAchievements icon conversion produced unexpected dimensions: $($image.Width)x$($image.Height)."
     }
-    if ($image.Width -ne $image.Height) {
-        throw "RetroAchievements icon must be square: $($image.Width)x$($image.Height)."
-    }
-    Write-Host "Using official RetroAchievements icon: $($image.Width)x$($image.Height), $($bytes.Length) bytes"
+    Write-Host "Using official RetroAchievements square icon: $($image.Width)x$($image.Height), $($bytes.Length) bytes"
 } finally {
     $image.Dispose()
 }
