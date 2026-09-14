@@ -21,6 +21,23 @@ describe('v0.7 Electron service boundaries', () => {
     expect(updates).toContain("mainWindow.webContents.send('update:status-changed', status)");
   });
 
+  it('moves config persistence, normalization and safeStorage handling out of main.cjs', () => {
+    const main = source('electron/main.cjs');
+    const config = source('electron/services/config-service.cjs');
+
+    expect(main).toContain("require('./services/config-service.cjs')");
+    expect(main).toContain('createConfigService({');
+    expect(main).not.toContain('function configPath()');
+    expect(main).not.toContain('function clampOpacity(value)');
+    expect(main).not.toContain('function publicConfig()');
+
+    expect(config).toContain("path.join(app.getPath('userData'), 'config.json')");
+    expect(config).toContain('safeStorage.decryptString');
+    expect(config).toContain('safeStorage.encryptString');
+    expect(config).toContain('function normalizeOverlay(input = {})');
+    expect(config).toContain('function publicConfig()');
+  });
+
   it('centralizes IPC channel registration behind one bootstrap call', () => {
     const main = source('electron/main.cjs');
     const ipc = source('electron/ipc/register.cjs');
