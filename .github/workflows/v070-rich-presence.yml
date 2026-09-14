@@ -1,0 +1,136 @@
+name: v0.7 Rich Presence Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/v0.7.0-rich-presence]
+    paths:
+      - 'native/rcheevos-runtime-helper/**'
+      - 'app/electron/services/observer-runtime-service.cjs'
+      - 'app/electron/services/ra-runtime-data-service.cjs'
+      - 'scripts/build-runtime-helper.ps1'
+      - 'scripts/test-observer-runtime-service.cjs'
+      - 'scripts/test-observer-runtime-integration.cjs'
+      - 'scripts/test-ra-runtime-data-service.cjs'
+      - '.github/workflows/v070-rich-presence.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'native/rcheevos-runtime-helper/**'
+      - 'app/electron/services/observer-runtime-service.cjs'
+      - 'app/electron/services/ra-runtime-data-service.cjs'
+      - 'scripts/build-runtime-helper.ps1'
+      - 'scripts/test-observer-runtime-service.cjs'
+      - 'scripts/test-observer-runtime-integration.cjs'
+      - 'scripts/test-ra-runtime-data-service.cjs'
+      - '.github/workflows/v070-rich-presence.yml'
+
+concurrency:
+  group: v070-rich-presence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate Rich Presence services
+        shell: pwsh
+        run: |
+          node --check app/electron/services/observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer runtime syntax check failed.' }
+          node --check app/electron/services/ra-runtime-data-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime data service syntax check failed.' }
+          node scripts/test-observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer Rich Presence tests failed.' }
+          node scripts/test-ra-runtime-data-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime data service tests failed.' }
+
+      - name: Guard official Rich Presence source and observer-only authority
+        shell: pwsh
+        run: |
+          $runtimeData = Get-Content 'app/electron/services/ra-runtime-data-service.cjs' -Raw
+          if (-not $runtimeData.Contains("richPresenceScript: String(patch.RichPresencePatch || '')")) {
+            throw 'Official PatchData RichPresencePatch normalization is missing.'
+          }
+          if (-not $runtimeData.Contains('richPresenceScript: data.richPresenceScript')) {
+            throw 'Official Rich Presence script is not forwarded into the observer runtime.'
+          }
+          foreach ($forbidden in @("r: 'startsession'", "r: 'ping'", "r: 'awardachievement'", "r: 'submitlbentry'")) {
+            if ($runtimeData.Contains($forbidden)) { throw "Forbidden RA submission/session endpoint found: $forbidden" }
+          }
+
+          $observer = Get-Content 'app/electron/services/observer-runtime-service.cjs' -Raw
+          foreach ($required in @('activateRichPresence', 'richPresenceLoaded', 'richPresenceUpdatedAt', 'clearRuntime', "officialCompletionAuthority: 'retroachievements-server'")) {
+            if (-not $observer.Contains($required)) { throw "Rich Presence observer contract missing: $required" }
+          }
+
+      - name: Validate app regressions and production build
+        shell: pwsh
+        working-directory: app
+        run: |
+          npm install --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'npm install failed.' }
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript check failed.' }
+          npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed.' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Production build failed.' }
+
+      - name: Build pinned rcheevos helper
+        shell: pwsh
+        run: |
+          ./scripts/build-runtime-helper.ps1 -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper build failed.' }
+
+      - name: Validate Rich Presence native self-test
+        shell: pwsh
+        run: |
+          $helper = (Resolve-Path 'app/tools/ra-runtime-helper.exe').Path
+          $raw = & $helper --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper self-test failed.' }
+          $self = $raw | ConvertFrom-Json
+          if (-not $self.ok) { throw 'Runtime helper self-test reported failure.' }
+          if (-not $self.runtimeParser) { throw 'rcheevos parser self-test failed.' }
+          if (-not $self.observerRuntime) { throw 'Observer runtime self-test failed.' }
+          if (-not $self.richPresenceRuntime) { throw 'Rich Presence runtime self-test failed.' }
+          if (-not $self.readOnlyBridge) { throw 'Read-only bridge contract is missing.' }
+          if ($self.rcheevosTag -ne 'v12.5.0') { throw "Unexpected rcheevos tag: $($self.rcheevosTag)" }
+
+      - name: Validate Rich Presence protocol without Dolphin
+        shell: pwsh
+        run: |
+          $helper = (Resolve-Path 'app/tools/ra-runtime-helper.exe').Path
+          $lines = @(
+            '{"id":1,"command":"activateAchievement","achievementId":700000001,"definition":"M:0xH0040AFC0>=255"}',
+            '{"id":2,"command":"activateRichPresence","script":"Display:\nProtocol Rich Presence"}',
+            '{"id":3,"command":"status"}',
+            '{"id":4,"command":"clearRuntime"}',
+            '{"id":5,"command":"status"}',
+            '{"id":6,"command":"shutdown"}'
+          ) | & $helper
+          if ($LASTEXITCODE -ne 0) { throw 'Rich Presence protocol smoke test failed.' }
+          $messages = @($lines | ForEach-Object { $_ | ConvertFrom-Json })
+          $ready = $messages | Where-Object { $_.type -eq 'ready' } | Select-Object -First 1
+          $activateRp = $messages | Where-Object { $_.command -eq 'activateRichPresence' } | Select-Object -First 1
+          $statuses = @($messages | Where-Object { $_.command -eq 'status' })
+          $clear = $messages | Where-Object { $_.command -eq 'clearRuntime' } | Select-Object -First 1
+          if (-not $ready.richPresenceEvaluation) { throw 'Helper did not advertise Rich Presence evaluation.' }
+          if (-not $activateRp.ok -or -not $activateRp.active -or -not $activateRp.observerOnly) { throw 'Rich Presence activation failed.' }
+          if ($statuses.Count -ne 2) { throw 'Expected status before and after clearRuntime.' }
+          if (-not $statuses[0].richPresenceActive) { throw 'Rich Presence was not active before clearRuntime.' }
+          if (-not $clear.ok -or $clear.richPresenceActive) { throw 'clearRuntime did not clear Rich Presence.' }
+          if ($statuses[1].richPresenceActive -or $statuses[1].achievementCount -ne 0) { throw 'Runtime state remained after clearRuntime.' }
+
+      - name: Validate Node to native Rich Presence path
+        shell: pwsh
+        run: |
+          node scripts/test-observer-runtime-integration.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer/native Rich Presence integration failed.' }

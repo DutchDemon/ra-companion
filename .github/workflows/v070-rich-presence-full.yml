@@ -1,0 +1,258 @@
+name: v0.7 Rich Presence Full Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/v0.7.0-rich-presence]
+    paths:
+      - '.github/workflows/v070-rich-presence-full.yml'
+      - '.github/workflows/v070-rich-presence.yml'
+      - 'docs/V0.7-RICH-PRESENCE.md'
+      - 'native/rcheevos-runtime-helper/**'
+      - 'app/electron/services/observer-runtime-service.cjs'
+      - 'app/electron/services/ra-runtime-data-service.cjs'
+      - 'app/electron/main.cjs'
+      - 'app/src/**'
+      - 'scripts/build-runtime-helper.ps1'
+      - 'scripts/test-observer-runtime-service.cjs'
+      - 'scripts/test-observer-runtime-integration.cjs'
+      - 'scripts/test-ra-runtime-data-service.cjs'
+
+concurrency:
+  group: v070-rich-presence-full-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VALIDATION_VERSION: 0.7.0-dev.6
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate Rich Presence contracts
+        shell: pwsh
+        run: |
+          node --check app/electron/services/observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer runtime syntax check failed.' }
+          node --check app/electron/services/ra-runtime-data-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime data service syntax check failed.' }
+          node scripts/test-observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer Rich Presence tests failed.' }
+          node scripts/test-ra-runtime-data-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime data service tests failed.' }
+
+          $runtimeData = Get-Content 'app/electron/services/ra-runtime-data-service.cjs' -Raw
+          if (-not $runtimeData.Contains("richPresenceScript: String(patch.RichPresencePatch || '')")) {
+            throw 'Official PatchData RichPresencePatch normalization is missing.'
+          }
+          if (-not $runtimeData.Contains('richPresenceScript: data.richPresenceScript')) {
+            throw 'Official Rich Presence script is not forwarded into the observer runtime.'
+          }
+          foreach ($forbidden in @("r: 'startsession'", "r: 'ping'", "r: 'awardachievement'", "r: 'submitlbentry'")) {
+            if ($runtimeData.Contains($forbidden)) { throw "Forbidden RA submission/session endpoint found: $forbidden" }
+          }
+
+          $observer = Get-Content 'app/electron/services/observer-runtime-service.cjs' -Raw
+          foreach ($required in @('activateRichPresence', 'richPresenceLoaded', 'richPresenceUpdatedAt', 'clearRuntime', "officialCompletionAuthority: 'retroachievements-server'")) {
+            if (-not $observer.Contains($required)) { throw "Rich Presence observer contract missing: $required" }
+          }
+
+          $main = Get-Content 'app/electron/main.cjs' -Raw
+          if (-not $main.Contains('const progress = baseProgress;')) { throw 'Official RA completion authority invariant is missing.' }
+          if ($main.Contains('runtimeProgress =')) { throw 'Local runtime must not replace official RA progress.' }
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Strict app type regression and production checks
+        working-directory: app
+        shell: pwsh
+        run: |
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript typecheck failed.' }
+          npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed.' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Production build failed.' }
+
+      - name: Build pinned rcheevos helper
+        shell: pwsh
+        run: |
+          ./scripts/build-runtime-helper.ps1 -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper build failed.' }
+
+      - name: Validate native Rich Presence runtime
+        shell: pwsh
+        run: |
+          node scripts/test-observer-runtime-integration.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer/native Rich Presence integration failed.' }
+          $helper = (Resolve-Path 'app/tools/ra-runtime-helper.exe').Path
+          $raw = & $helper --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper self-test failed.' }
+          $self = $raw | ConvertFrom-Json
+          if (-not $self.ok -or -not $self.runtimeParser -or -not $self.gameCubeMemoryMapping -or -not $self.observerRuntime -or -not $self.richPresenceRuntime -or -not $self.readOnlyBridge) {
+            throw 'Runtime helper Rich Presence/read-only self-test failed.'
+          }
+          if ($self.rcheevosTag -ne 'v12.5.0') { throw "Unexpected rcheevos tag: $($self.rcheevosTag)" }
+          $raw | Set-Content 'rich-presence-self-test.txt'
+
+      - name: Validate native teardown protocol
+        shell: pwsh
+        run: |
+          $helper = (Resolve-Path 'app/tools/ra-runtime-helper.exe').Path
+          $lines = @(
+            '{"id":1,"command":"activateAchievement","achievementId":700000001,"definition":"M:0xH0040AFC0>=255"}',
+            '{"id":2,"command":"activateRichPresence","script":"Display:\nPackaged Rich Presence"}',
+            '{"id":3,"command":"status"}',
+            '{"id":4,"command":"clearRuntime"}',
+            '{"id":5,"command":"status"}',
+            '{"id":6,"command":"shutdown"}'
+          ) | & $helper
+          if ($LASTEXITCODE -ne 0) { throw 'Rich Presence protocol smoke test failed.' }
+          $messages = @($lines | ForEach-Object { $_ | ConvertFrom-Json })
+          $ready = $messages | Where-Object { $_.type -eq 'ready' } | Select-Object -First 1
+          $statuses = @($messages | Where-Object { $_.command -eq 'status' })
+          $clear = $messages | Where-Object { $_.command -eq 'clearRuntime' } | Select-Object -First 1
+          if (-not $ready.richPresenceEvaluation) { throw 'Helper did not advertise Rich Presence evaluation.' }
+          if ($statuses.Count -ne 2 -or -not $statuses[0].richPresenceActive) { throw 'Rich Presence activation status failed.' }
+          if (-not $clear.ok -or $clear.richPresenceActive) { throw 'clearRuntime did not clear Rich Presence.' }
+          if ($statuses[1].richPresenceActive -or $statuses[1].achievementCount -ne 0) { throw 'Runtime state remained after clearRuntime.' }
+
+      - name: Stamp validation build version
+        working-directory: app
+        shell: pwsh
+        run: |
+          node -e "const fs=require('fs');const p=require('./package.json');p.version=process.env.VALIDATION_VERSION;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($pkg.version -ne $env:VALIDATION_VERSION) { throw 'Validation version stamp failed.' }
+
+      - name: Build NSIS Rich Presence validation installer
+        working-directory: app
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npx electron-builder --win nsis --x64 --publish never
+          if ($LASTEXITCODE -ne 0) { throw 'electron-builder failed.' }
+
+      - name: Verify packaged Rich Presence and Defender scan
+        shell: pwsh
+        run: |
+          $packagedRoot = 'app/release/win-unpacked/resources/app'
+          $packagedObserver = Join-Path $packagedRoot 'electron/services/observer-runtime-service.cjs'
+          $packagedRuntimeData = Join-Path $packagedRoot 'electron/services/ra-runtime-data-service.cjs'
+          $packagedMain = Join-Path $packagedRoot 'electron/main.cjs'
+          $packagedHelper = Join-Path $packagedRoot 'tools/ra-runtime-helper.exe'
+          foreach ($required in @($packagedObserver, $packagedRuntimeData, $packagedMain, $packagedHelper)) {
+            if (-not (Test-Path $required)) { throw "Packaged app is missing Rich Presence file: $required" }
+          }
+
+          node --check $packagedObserver
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged observer service syntax check failed.' }
+          node --check $packagedRuntimeData
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged runtime data service syntax check failed.' }
+
+          $observer = Get-Content $packagedObserver -Raw
+          foreach ($required in @('activateRichPresence', 'richPresenceLoaded', 'richPresenceUpdatedAt', 'clearRuntime', "officialCompletionAuthority: 'retroachievements-server'")) {
+            if (-not $observer.Contains($required)) { throw "Packaged Rich Presence observer contract missing: $required" }
+          }
+
+          $runtimeData = Get-Content $packagedRuntimeData -Raw
+          if (-not $runtimeData.Contains("richPresenceScript: String(patch.RichPresencePatch || '')")) {
+            throw 'Packaged official PatchData RichPresencePatch normalization is missing.'
+          }
+          if (-not $runtimeData.Contains('richPresenceScript: data.richPresenceScript')) {
+            throw 'Packaged official Rich Presence forwarding is missing.'
+          }
+          foreach ($forbidden in @("r: 'startsession'", "r: 'ping'", "r: 'awardachievement'", "r: 'submitlbentry'")) {
+            if ($runtimeData.Contains($forbidden)) { throw "Packaged runtime data contains forbidden endpoint: $forbidden" }
+          }
+
+          $main = Get-Content $packagedMain -Raw
+          if (-not $main.Contains('const progress = baseProgress;')) { throw 'Packaged completion-authority invariant is missing.' }
+
+          $raw = & $packagedHelper --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged helper self-test failed.' }
+          $self = $raw | ConvertFrom-Json
+          if (-not $self.ok -or -not $self.observerRuntime -or -not $self.richPresenceRuntime -or -not $self.readOnlyBridge) {
+            throw 'Packaged helper does not expose validated Rich Presence observer capabilities.'
+          }
+          if ($self.rcheevosTag -ne 'v12.5.0') { throw "Unexpected packaged rcheevos tag: $($self.rcheevosTag)" }
+
+          $expectedInstallerName = "RA Companion Setup $env:VALIDATION_VERSION.exe"
+          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq $expectedInstallerName } | Select-Object -First 1
+          if (-not $installer) { throw "NSIS validation installer was not generated: $expectedInstallerName" }
+
+          $report = 'app/release/rich-presence-defender-scan.txt'
+          "Installer: $($installer.FullName)" | Set-Content $report
+          "Helper: $((Resolve-Path $packagedHelper).Path)" | Add-Content $report
+          $status = Get-MpComputerStatus -ErrorAction Stop
+          "AntivirusEnabled: $($status.AntivirusEnabled)" | Add-Content $report
+          "AntivirusSignatureVersion: $($status.AntivirusSignatureVersion)" | Add-Content $report
+          if ($status.AntivirusEnabled) {
+            Start-MpScan -ScanType CustomScan -ScanPath $installer.FullName -ErrorAction Stop
+            Start-MpScan -ScanType CustomScan -ScanPath (Resolve-Path $packagedHelper).Path -ErrorAction Stop
+            Start-Sleep -Seconds 2
+            $hits = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
+              ($_.Resources -join ';') -like "*$($installer.Name)*" -or ($_.Resources -join ';') -like '*ra-runtime-helper.exe*'
+            })
+            if ($hits.Count -gt 0) { throw 'Microsoft Defender detected a Rich Presence validation artifact.' }
+          }
+          'RESULT: NO DETECTION' | Add-Content $report
+
+          Get-FileHash $installer.FullName -Algorithm SHA256 | Format-List | Out-String | Set-Content 'app/release/rich-presence-checksums.txt'
+          Get-FileHash (Resolve-Path $packagedHelper).Path -Algorithm SHA256 | Format-List | Out-String | Add-Content 'app/release/rich-presence-checksums.txt'
+
+      - name: Upload full Rich Presence validation build
+        uses: actions/upload-artifact@v4
+        with:
+          name: v070-rich-presence-full-validation
+          if-no-files-found: error
+          path: |
+            app/release/RA Companion Setup 0.7.0-dev.6.exe
+            app/release/RA Companion Setup 0.7.0-dev.6.exe.blockmap
+            app/release/latest.yml
+            app/release/rich-presence-defender-scan.txt
+            app/release/rich-presence-checksums.txt
+            app/tools/ra-runtime-helper.exe
+            rich-presence-self-test.txt
+
+  clamav:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: v070-rich-presence-full-validation
+          path: artifact
+
+      - name: ClamAV scan
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clamav clamav-freshclam
+          sudo systemctl stop clamav-freshclam.service || true
+          sudo pkill -x freshclam || true
+          sudo freshclam
+          INSTALLER=$(find artifact -type f -name 'RA Companion Setup 0.7.0-dev.6.exe' -print -quit)
+          HELPER=$(find artifact -type f -name 'ra-runtime-helper.exe' -print -quit)
+          test -n "$INSTALLER"
+          test -n "$HELPER"
+          clamscan --infected --no-summary "$INSTALLER" "$HELPER" | tee artifact/rich-presence-clamav-scan.txt
+          test ${PIPESTATUS[0]} -eq 0
+
+      - name: Upload ClamAV report
+        uses: actions/upload-artifact@v4
+        with:
+          name: v070-rich-presence-clamav-report
+          if-no-files-found: error
+          path: artifact/rich-presence-clamav-scan.txt

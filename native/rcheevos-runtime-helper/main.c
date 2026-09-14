@@ -14,8 +14,10 @@
 #endif
 
 #define RA_RUNTIME_PROTOCOL_VERSION 1
-#define RA_LINE_BUFFER_SIZE 32768
+#define RA_LINE_BUFFER_SIZE 131072
 #define RA_DEFINITION_BUFFER_SIZE 24576
+#define RA_RICH_PRESENCE_SCRIPT_SIZE 49152
+#define RA_RICH_PRESENCE_DISPLAY_SIZE 512
 #define RA_DIAGNOSTIC_READ_MAX 64u
 #define RA_FRAME_EVENT_MAX 128u
 
@@ -163,8 +165,19 @@ static uint32_t RC_CCONV synthetic_runtime_peek(uint32_t address, uint32_t num_b
   return value;
 }
 
+static int rich_presence_active(const rc_runtime_t* runtime) {
+  return runtime && runtime->richpresence && runtime->richpresence->richpresence;
+}
+
+static int read_rich_presence(const rc_runtime_t* runtime, rc_runtime_peek_t peek, void* peek_ud, char* buffer, size_t buffer_size) {
+  if (!buffer || buffer_size == 0) return 0;
+  buffer[0] = '\0';
+  if (!rich_presence_active(runtime)) return 0;
+  return rc_runtime_get_richpresence(runtime, buffer, buffer_size, peek, peek_ud, NULL);
+}
+
 static void write_ready(void) {
-  printf("{\"type\":\"ready\",\"protocolVersion\":%d,\"rcheevosVersion\":\"%s\",\"rcheevosTag\":\"%s\",\"runtimeInitialized\":true,\"gameCubeMemoryBridge\":true,\"observerEvaluation\":true}\n",
+  printf("{\"type\":\"ready\",\"protocolVersion\":%d,\"rcheevosVersion\":\"%s\",\"rcheevosTag\":\"%s\",\"runtimeInitialized\":true,\"gameCubeMemoryBridge\":true,\"observerEvaluation\":true,\"richPresenceEvaluation\":true}\n",
          RA_RUNTIME_PROTOCOL_VERSION, rc_version_string(), RA_RCHEEVOS_TAG);
   fflush(stdout);
 }
@@ -254,8 +267,32 @@ static void write_achievement_status(unsigned long id, const rc_runtime_t* runti
   fputs("}\n", stdout);
 }
 
-static void write_frame_result(unsigned long id) {
+static void write_rich_presence(unsigned long id, const rc_runtime_t* runtime, const dolphin_memory_t* memory) {
+  char text[RA_RICH_PRESENCE_DISPLAY_SIZE] = "";
+  if (!rich_presence_active(runtime)) {
+    write_response_prefix(id, "richPresence");
+    fputs("\"ok\":true,\"active\":false,\"text\":\"\",\"observerOnly\":true}\n", stdout);
+    return;
+  }
+  if (!dolphin_memory_is_attached(memory)) {
+    write_error_response(id, "richPresence", "Dolphin memory must be attached before Rich Presence evaluation.");
+    return;
+  }
+  read_rich_presence(runtime, dolphin_runtime_peek, (void*)memory, text, sizeof(text));
+  write_response_prefix(id, "richPresence");
+  fputs("\"ok\":true,\"active\":true,\"text\":", stdout);
+  write_json_string(text);
+  fputs(",\"observerOnly\":true}\n", stdout);
+}
+
+static void write_frame_result(unsigned long id, const rc_runtime_t* runtime, const dolphin_memory_t* memory) {
   uint32_t index;
+  char rich_presence[RA_RICH_PRESENCE_DISPLAY_SIZE] = "";
+  const int has_rich_presence = rich_presence_active(runtime);
+  if (has_rich_presence) {
+    read_rich_presence(runtime, dolphin_runtime_peek, (void*)memory, rich_presence, sizeof(rich_presence));
+  }
+
   write_response_prefix(id, "evaluateFrame");
   printf("\"ok\":true,\"eventCount\":%u,\"events\":[", g_frame_event_count);
   for (index = 0; index < g_frame_event_count; ++index) {
@@ -265,7 +302,11 @@ static void write_frame_result(unsigned long id) {
     write_json_string(runtime_event_name(event->type));
     printf(",\"value\":%d}", event->value);
   }
-  fputs("]}\n", stdout);
+  fputs("],\"richPresenceActive\":", stdout);
+  fputs(has_rich_presence ? "true" : "false", stdout);
+  fputs(",\"richPresence\":", stdout);
+  write_json_string(rich_presence);
+  fputs("}\n", stdout);
 }
 
 static int run_memory_self_test(void) {
@@ -316,12 +357,36 @@ static int run_observer_self_test(void) {
   return ok;
 }
 
+static int run_rich_presence_self_test(void) {
+  rc_runtime_t runtime;
+  uint8_t ram[1] = {0};
+  synthetic_memory_t memory;
+  char text[RA_RICH_PRESENCE_DISPLAY_SIZE] = "";
+  int result;
+  int ok = 1;
+
+  memory.data = ram;
+  memory.size = (uint32_t)sizeof(ram);
+  rc_runtime_init(&runtime);
+
+  result = rc_runtime_activate_richpresence(&runtime, "Display:\nObserver Rich Presence", NULL, 0);
+  if (result != RC_OK || !rich_presence_active(&runtime)) ok = 0;
+  if (ok) {
+    read_rich_presence(&runtime, synthetic_runtime_peek, &memory, text, sizeof(text));
+    if (strcmp(text, "Observer Rich Presence") != 0) ok = 0;
+  }
+
+  rc_runtime_destroy(&runtime);
+  return ok;
+}
+
 static int run_self_test(void) {
   rc_runtime_t runtime;
   int result;
   int parser_success = 1;
   int memory_success;
   int observer_success;
+  int rich_presence_success;
 
   rc_runtime_init(&runtime);
 
@@ -337,17 +402,19 @@ static int run_self_test(void) {
   rc_runtime_destroy(&runtime);
   memory_success = run_memory_self_test();
   observer_success = run_observer_self_test();
+  rich_presence_success = run_rich_presence_self_test();
 
   printf("{\"ok\":%s,\"protocolVersion\":%d,\"rcheevosVersion\":\"%s\",\"rcheevosTag\":\"%s\","
-         "\"runtimeParser\":%s,\"gameCubeMemoryMapping\":%s,\"observerRuntime\":%s,\"readOnlyBridge\":true}\n",
-         parser_success && memory_success && observer_success ? "true" : "false",
+         "\"runtimeParser\":%s,\"gameCubeMemoryMapping\":%s,\"observerRuntime\":%s,\"richPresenceRuntime\":%s,\"readOnlyBridge\":true}\n",
+         parser_success && memory_success && observer_success && rich_presence_success ? "true" : "false",
          RA_RUNTIME_PROTOCOL_VERSION,
          rc_version_string(),
          RA_RCHEEVOS_TAG,
          parser_success ? "true" : "false",
          memory_success ? "true" : "false",
-         observer_success ? "true" : "false");
-  return parser_success && memory_success && observer_success ? 0 : 1;
+         observer_success ? "true" : "false",
+         rich_presence_success ? "true" : "false");
+  return parser_success && memory_success && observer_success && rich_presence_success ? 0 : 1;
 }
 
 int main(int argc, char** argv) {
@@ -380,12 +447,13 @@ int main(int argc, char** argv) {
 
     if (strcmp(command, "ping") == 0) {
       write_response_prefix(id, "ping");
-      printf("\"ok\":true,\"protocolVersion\":%d,\"rcheevosVersion\":\"%s\",\"rcheevosTag\":\"%s\",\"observerEvaluation\":true}\n",
+      printf("\"ok\":true,\"protocolVersion\":%d,\"rcheevosVersion\":\"%s\",\"rcheevosTag\":\"%s\",\"observerEvaluation\":true,\"richPresenceEvaluation\":true}\n",
              RA_RUNTIME_PROTOCOL_VERSION, rc_version_string(), RA_RCHEEVOS_TAG);
     } else if (strcmp(command, "status") == 0) {
       write_response_prefix(id, "status");
-      printf("\"ok\":true,\"runtimeInitialized\":true,\"observerOnly\":true,\"achievementCount\":%u,\"leaderboardCount\":%u,\"dolphinAttached\":%s}\n",
+      printf("\"ok\":true,\"runtimeInitialized\":true,\"observerOnly\":true,\"achievementCount\":%u,\"leaderboardCount\":%u,\"richPresenceActive\":%s,\"dolphinAttached\":%s}\n",
              runtime.trigger_count, runtime.lboard_count,
+             rich_presence_active(&runtime) ? "true" : "false",
              dolphin_memory_is_attached(&dolphin_memory) ? "true" : "false");
     } else if (strcmp(command, "attachDolphin") == 0) {
       unsigned long pid = 0;
@@ -441,13 +509,29 @@ int main(int argc, char** argv) {
         write_response_prefix(id, "deactivateAchievement");
         printf("\"ok\":true,\"achievementId\":%lu}\n", achievement_id);
       }
+    } else if (strcmp(command, "activateRichPresence") == 0) {
+      char script[RA_RICH_PRESENCE_SCRIPT_SIZE];
+      int result;
+      if (!extract_string_field(line, "script", script, sizeof(script)) || script[0] == '\0') {
+        write_error_response(id, "activateRichPresence", "A raw rcheevos Rich Presence script is required.");
+      } else {
+        result = rc_runtime_activate_richpresence(&runtime, script, NULL, 0);
+        if (result != RC_OK) {
+          write_error_response(id, "activateRichPresence", rc_error_str(result));
+        } else {
+          write_response_prefix(id, "activateRichPresence");
+          fputs("\"ok\":true,\"active\":true,\"observerOnly\":true}\n", stdout);
+        }
+      }
+    } else if (strcmp(command, "richPresence") == 0) {
+      write_rich_presence(id, &runtime, &dolphin_memory);
     } else if (strcmp(command, "evaluateFrame") == 0) {
       if (!dolphin_memory_is_attached(&dolphin_memory)) {
         write_error_response(id, "evaluateFrame", "Dolphin memory must be attached before observer evaluation.");
       } else {
         g_frame_event_count = 0;
         rc_runtime_do_frame(&runtime, capture_runtime_event, dolphin_runtime_peek, &dolphin_memory, NULL);
-        write_frame_result(id);
+        write_frame_result(id, &runtime, &dolphin_memory);
       }
     } else if (strcmp(command, "achievementStatus") == 0) {
       unsigned long achievement_id = 0;
@@ -456,6 +540,12 @@ int main(int argc, char** argv) {
       } else {
         write_achievement_status(id, &runtime, (uint32_t)achievement_id);
       }
+    } else if (strcmp(command, "clearRuntime") == 0) {
+      rc_runtime_destroy(&runtime);
+      rc_runtime_init(&runtime);
+      g_frame_event_count = 0;
+      write_response_prefix(id, "clearRuntime");
+      fputs("\"ok\":true,\"achievementCount\":0,\"leaderboardCount\":0,\"richPresenceActive\":false}\n", stdout);
     } else if (strcmp(command, "reset") == 0) {
       rc_runtime_reset(&runtime);
       write_response_prefix(id, "reset");
