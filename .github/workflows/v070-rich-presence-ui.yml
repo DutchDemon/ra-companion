@@ -1,0 +1,80 @@
+name: v0.7 Rich Presence UI Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/v0.7.0-rich-presence-ui
+    paths:
+      - 'app/electron/main.cjs'
+      - 'app/src/main.tsx'
+      - 'app/src/AppPages.tsx'
+      - 'app/src/global.d.ts'
+      - 'app/src/styles.css'
+      - 'scripts/test-rich-presence-ui-contract.cjs'
+      - '.github/workflows/v070-rich-presence-ui.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/electron/main.cjs'
+      - 'app/src/main.tsx'
+      - 'app/src/AppPages.tsx'
+      - 'app/src/global.d.ts'
+      - 'app/src/styles.css'
+      - 'scripts/test-rich-presence-ui-contract.cjs'
+      - '.github/workflows/v070-rich-presence-ui.yml'
+
+concurrency:
+  group: v070-rich-presence-ui-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate snapshot and renderer contracts
+        shell: pwsh
+        run: |
+          node --check app/electron/main.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Electron main syntax check failed.' }
+          node scripts/test-rich-presence-ui-contract.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Rich Presence UI contract test failed.' }
+
+      - name: Guard Rich Presence priority and RA authority
+        shell: pwsh
+        run: |
+          $main = Get-Content 'app/electron/main.cjs' -Raw
+          if (-not $main.Contains("source: 'rcheevos-runtime'")) { throw 'Official rcheevos Rich Presence snapshot source is missing.' }
+          if (-not $main.Contains('const progress = baseProgress;')) { throw 'Server-authoritative completion invariant is missing.' }
+          $renderer = Get-Content 'app/src/main.tsx' -Raw
+          if (-not $renderer.Contains('officialPresenceMessage || fastRamPresence || fallbackSnapshotPresence')) { throw 'Rich Presence source priority contract is missing.' }
+          $runtimeData = Get-Content 'app/electron/services/ra-runtime-data-service.cjs' -Raw
+          foreach ($forbidden in @("r: 'startsession'", "r: 'ping'", "r: 'awardachievement'", "r: 'submitlbentry'")) {
+            if ($runtimeData.Contains($forbidden)) { throw "Forbidden RA session/submission endpoint found: $forbidden" }
+          }
+
+      - name: Validate live observer regressions
+        shell: pwsh
+        run: |
+          node scripts/test-observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Live observer regression tests failed.' }
+
+      - name: Validate app regressions and production build
+        working-directory: app
+        shell: pwsh
+        run: |
+          npm install --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'npm install failed.' }
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript check failed.' }
+          npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed.' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Production build failed.' }
