@@ -8,12 +8,19 @@ on:
       - '.gitattributes'
       - 'app/**'
       - 'scripts/test-ra-runtime-data-service.cjs'
-      - 'scripts/apply-v070-runtime-auth-data.cjs'
-      - 'scripts/fix-v070-runtime-auth-test-compat.cjs'
+      - 'scripts/test-observer-runtime-service.cjs'
+      - '.github/workflows/v070-runtime-auth-data.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.gitattributes'
+      - 'app/**'
+      - 'scripts/test-ra-runtime-data-service.cjs'
+      - 'scripts/test-observer-runtime-service.cjs'
       - '.github/workflows/v070-runtime-auth-data.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: v070-runtime-auth-data-${{ github.ref }}
@@ -30,19 +37,13 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Apply deterministic runtime auth integration
-        shell: pwsh
-        run: |
-          node scripts/apply-v070-runtime-auth-data.cjs
-          if ($LASTEXITCODE -ne 0) { throw 'Runtime auth integration migration failed.' }
-          node scripts/fix-v070-runtime-auth-test-compat.cjs
-          if ($LASTEXITCODE -ne 0) { throw 'Runtime auth settings compatibility migration failed.' }
-
-      - name: Validate service behavior and syntax
+      - name: Validate runtime auth services and syntax
         shell: pwsh
         run: |
           node --check app/electron/services/ra-runtime-data-service.cjs
           if ($LASTEXITCODE -ne 0) { throw 'RA runtime data service syntax check failed.' }
+          node --check app/electron/services/observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer runtime service syntax check failed.' }
           node --check app/electron/main.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Electron main syntax check failed.' }
           node --check app/electron/ipc/register.cjs
@@ -64,6 +65,8 @@ jobs:
           if (-not $service.Contains("r: 'login2'")) { throw 'Runtime login2 token exchange is missing.' }
           if (-not $service.Contains("r: 'patch'")) { throw 'Official patch-data request is missing.' }
           if ($service.Contains('apiKey: credential.token')) { throw 'Runtime token must not be repurposed as the Web API key.' }
+          $main = Get-Content 'app/electron/main.cjs' -Raw
+          if (-not $main.Contains('const progress = baseProgress;')) { throw 'Official RA progress authority invariant is missing.' }
 
       - name: Install app dependencies
         working-directory: app
@@ -79,30 +82,3 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed.' }
           npm run build
           if ($LASTEXITCODE -ne 0) { throw 'Production build failed.' }
-
-  promote:
-    needs: validate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: feature/v0.7.0-runtime-auth-data
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Promote validated integration to canonical source
-        shell: bash
-        run: |
-          node scripts/apply-v070-runtime-auth-data.cjs
-          node scripts/fix-v070-runtime-auth-test-compat.cjs
-          if git diff --quiet -- app/electron/main.cjs app/electron/ipc/register.cjs app/electron/preload.cjs app/src/global.d.ts app/src/AppPages.tsx; then
-            echo 'Canonical source already contains the runtime auth integration.'
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add app/electron/main.cjs app/electron/ipc/register.cjs app/electron/preload.cjs app/src/global.d.ts app/src/AppPages.tsx
-          git commit -m 'feat: wire secure RA runtime data connection'
-          git push origin HEAD:feature/v0.7.0-runtime-auth-data
