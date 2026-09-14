@@ -17,6 +17,7 @@ function createObserverRuntimeService({ runtimeHelper }) {
       loading: false,
       sealed: false,
       achievementIds: [],
+      helperPid: null,
       lastError: '',
     };
   }
@@ -30,6 +31,7 @@ function createObserverRuntimeService({ runtimeHelper }) {
       loading: state.loading,
       sealed: state.sealed,
       achievementIds: [...state.achievementIds],
+      helperPid: state.helperPid,
       lastError: state.lastError,
       observerOnly: true,
       officialCompletionAuthority: 'retroachievements-server',
@@ -81,6 +83,26 @@ function createObserverRuntimeService({ runtimeHelper }) {
     });
   }
 
+  function currentHelperStatus() {
+    return typeof runtimeHelper.getStatus === 'function' ? runtimeHelper.getStatus() : null;
+  }
+
+  function currentHelperPid() {
+    const status = currentHelperStatus();
+    return Number(status?.pid || 0) || null;
+  }
+
+  function assertHelperGeneration() {
+    if (!state.helperPid || typeof runtimeHelper.getStatus !== 'function') return;
+    const helper = currentHelperStatus();
+    const pid = Number(helper?.pid || 0) || null;
+    if (!helper?.running || !helper?.ready || pid !== state.helperPid) {
+      const message = 'Runtime helper restarted after definitions were loaded; observer definitions must be reloaded.';
+      state = { ...state, sealed: false, lastError: message };
+      throw new Error(message);
+    }
+  }
+
   async function bestEffortDeactivate(ids) {
     for (const achievementId of ids) {
       try {
@@ -120,6 +142,7 @@ function createObserverRuntimeService({ runtimeHelper }) {
       loading: true,
       sealed: false,
       achievementIds: [],
+      helperPid: null,
       lastError: '',
     };
 
@@ -145,6 +168,7 @@ function createObserverRuntimeService({ runtimeHelper }) {
         sealed: true,
         loadedAchievementCount: activatedIds.length,
         achievementIds: [...activatedIds],
+        helperPid: currentHelperPid(),
         lastError: '',
       };
       return publicStatus();
@@ -169,6 +193,7 @@ function createObserverRuntimeService({ runtimeHelper }) {
       throw new Error('No sealed observer game is loaded.');
     }
 
+    assertHelperGeneration();
     const memory = await memoryStatus();
     if (!memory?.attached) throw new Error('Dolphin memory is not attached.');
     if (!memory?.gameCubeMagic) throw new Error('Attached Dolphin memory does not contain a valid GameCube image.');
@@ -204,11 +229,13 @@ function createObserverRuntimeService({ runtimeHelper }) {
   }
 
   async function getAchievementStatus(achievementId) {
+    assertHelperGeneration();
     const id = ensureLoadedAchievementId(achievementId);
     return runtimeHelper.request('achievementStatus', { achievementId: id }, 5000);
   }
 
   async function getAchievementStatuses(achievementIds = state.achievementIds) {
+    assertHelperGeneration();
     const ids = achievementIds.map(ensureLoadedAchievementId);
     return Promise.all(ids.map((achievementId) => getAchievementStatus(achievementId)));
   }
