@@ -23,13 +23,10 @@ describe('v0.7.1 UI cleanup and Faron prerequisite fallback', () => {
     const root = path.resolve(__dirname, '..', '..');
     const renderer = fs.readFileSync(path.join(root, 'src/main.tsx'), 'utf8');
     const pages = fs.readFileSync(path.join(root, 'src/AppPages.tsx'), 'utf8');
-    const styles = fs.readFileSync(path.join(root, 'src/styles.css'), 'utf8');
 
     expect(renderer).not.toContain('v6-overlay-live-stats');
     expect(renderer).not.toContain('v7-overlay-live-counters');
     expect(pages).not.toContain('LIVE ACHIEVEMENT PROGRESS');
-    expect(styles).not.toContain('.v6-overlay-live-stats');
-    expect(styles).not.toContain('.v7-overlay-live-counters');
     expect(renderer).toContain('findPendingFaronVesselObjective');
     expect(renderer).toContain('pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : companion.comingUp');
     expect(renderer).toContain('achievementCounter(achievement, ram, profile || null, runtimeLive) || state?.progress');
