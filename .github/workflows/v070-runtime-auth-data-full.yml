@@ -6,6 +6,7 @@ on:
     branches: [feature/v0.7.0-runtime-auth-data]
     paths:
       - '.github/workflows/v070-runtime-auth-data-full.yml'
+      - 'docs/V0.7-RUNTIME-AUTH-DATA.md'
       - 'app/**'
       - 'native/rcheevos-runtime-helper/**'
       - 'scripts/build-runtime-helper.ps1'
