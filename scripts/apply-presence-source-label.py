@@ -34,15 +34,19 @@ write(p, text)
 
 p = 'app/src/AppPages.tsx'
 text = read(p)
-current_destructure = """    ramLive,
-    serverPresenceMessage,
+current_destructure = """    effectiveRam,
     presenceMessage,
-    companion,"""
-current_replacement = """    ramLive,
+    ramRoom,
+    ramLive,
     serverPresenceMessage,
+    currentNextAchievements,"""
+current_replacement = """    effectiveRam,
     presenceMessage,
     presenceSource,
-    companion,"""
+    ramRoom,
+    ramLive,
+    serverPresenceMessage,
+    currentNextAchievements,"""
 if text.count(current_destructure) != 1:
     raise SystemExit(f'{p}: CurrentGame destructure anchor mismatch')
 text = text.replace(current_destructure, current_replacement, 1)
@@ -53,7 +57,6 @@ if text.count(old_label) != 1:
 text = text.replace(old_label, new_label, 1)
 write(p, text)
 
-# Extend the permanent static contract.
 p = 'scripts/test-rich-presence-ui-contract.cjs'
 text = read(p)
 needle = "assert(renderer.includes('officialPresenceMessage || fastRamPresence || fallbackSnapshotPresence'));"
