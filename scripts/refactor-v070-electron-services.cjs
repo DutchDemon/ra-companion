@@ -29,6 +29,15 @@ if (!main.includes("require('./services/config-service.cjs')")) {
   );
 }
 
+if (!main.includes("require('./services/achievement-library-service.cjs')")) {
+  const configImport = "const { createConfigService } = require('./services/config-service.cjs');";
+  requireMatch(main.includes(configImport), 'Could not find config-service import anchor.');
+  main = main.replace(
+    configImport,
+    `${configImport}\nconst { createAchievementLibraryService } = require('./services/achievement-library-service.cjs');`,
+  );
+}
+
 if (main.includes('let appUpdater = null;')) {
   const updaterBlock = /let appUpdater = null;\r?\n[\s\S]*?\r?\nconst TWILIGHT_PRINCESS_GAME_ID = 3934;/;
   requireMatch(updaterBlock.test(main), 'Could not isolate legacy updater implementation.');
@@ -53,6 +62,12 @@ if (main.includes('function publicConfig()')) {
   main = main.replace(publicConfigBlock, 'function getOverlayState() {');
 }
 
+if (main.includes('const ACHIEVEMENT_LIBRARY_VERSION = 1;')) {
+  const libraryBlock = /const ACHIEVEMENT_LIBRARY_VERSION = 1;\r?\n[\s\S]*?\r?\nasync function refreshAchievementLibrary\(\) \{[\s\S]*?\r?\n\}\r?\n\r?\nfunction resetRaCaches\(\) \{/;
+  requireMatch(libraryBlock.test(main), 'Could not isolate achievement library implementation.');
+  main = main.replace(libraryBlock, 'function resetRaCaches() {');
+}
+
 const shortcutTimer = 'let shortcutHealthTimer = null;';
 requireMatch(main.includes(shortcutTimer), 'Could not find shortcut-health anchor.');
 
@@ -70,6 +85,15 @@ if (!main.includes('createUpdateService({')) {
   );
 }
 
+if (!main.includes('createAchievementLibraryService({')) {
+  const updateInitEnd = '  getMainWindow: () => mainWindow,\n});';
+  requireMatch(main.includes(updateInitEnd), 'Could not find update-service initialization anchor.');
+  main = main.replace(
+    updateInitEnd,
+    `${updateInitEnd}\n\nconst {\n  rememberAchievementGame,\n  getAchievementLibrary,\n  broadcastAchievementLibraryChanged,\n  refreshAchievementLibrary,\n} = createAchievementLibraryService({\n  app,\n  readConfig,\n  getMainWindow: () => mainWindow,\n  getRaProgress: (...args) => getRaProgress(...args),\n});`,
+  );
+}
+
 if (main.includes("ipcMain.handle('app:version'")) {
   const ipcBlock = /  ipcMain\.handle\('app:version'[\s\S]*?  ipcMain\.on\('overlay:move-end', \(event\) => endOverlayMove\(event\.sender\)\);\r?\n/;
   requireMatch(ipcBlock.test(main), 'Could not isolate legacy IPC registration block.');
@@ -79,9 +103,11 @@ if (main.includes("ipcMain.handle('app:version'")) {
 
 requireMatch(main.includes("const { createUpdateService } = require('./services/update-service.cjs');"), 'Update service import missing after transform.');
 requireMatch(main.includes("const { createConfigService } = require('./services/config-service.cjs');"), 'Config service import missing after transform.');
+requireMatch(main.includes("const { createAchievementLibraryService } = require('./services/achievement-library-service.cjs');"), 'Achievement library service import missing after transform.');
 requireMatch(main.includes("const { registerIpcHandlers } = require('./ipc/register.cjs');"), 'IPC boundary import missing after transform.');
 requireMatch(main.includes('createUpdateService({'), 'Update service initialization missing after transform.');
 requireMatch(main.includes('createConfigService({'), 'Config service initialization missing after transform.');
+requireMatch(main.includes('createAchievementLibraryService({'), 'Achievement library service initialization missing after transform.');
 requireMatch(main.includes('registerIpcHandlers(ipcMain, {'), 'IPC registration boundary missing after transform.');
 requireMatch(!main.includes("const { autoUpdater } = require('electron-updater');"), 'Legacy updater import remains in main.');
 requireMatch(!main.includes('let appUpdater = null;'), 'Legacy updater state remains in main.');
@@ -89,6 +115,8 @@ requireMatch(!main.includes("ipcMain.handle('app:version'"), 'Direct IPC registr
 requireMatch(!main.includes('function configPath()'), 'Legacy configPath remains in main.');
 requireMatch(!main.includes('function clampOpacity(value)'), 'Legacy config normalization remains in main.');
 requireMatch(!main.includes('function publicConfig()'), 'Legacy publicConfig remains in main.');
+requireMatch(!main.includes('const ACHIEVEMENT_LIBRARY_VERSION = 1;'), 'Legacy achievement library implementation remains in main.');
+requireMatch(!main.includes('function achievementLibraryPath()'), 'Legacy achievement library path remains in main.');
 
 fs.writeFileSync(mainPath, main, 'utf8');
 
@@ -107,4 +135,4 @@ requireMatch(v059.includes("const ipc = readFileSync(resolve(process.cwd(), 'ele
 requireMatch(v059.includes("expect(ipc).toContain(\"ipcMain.handle('snapshot:get'"), 'v0.5.9 forced-refresh IPC assertion was not migrated.');
 fs.writeFileSync(v059Path, v059, 'utf8');
 
-console.log('Applied v0.7 Electron config/update-service and IPC boundary refactor.');
+console.log('Applied v0.7 Electron config/update/library-service and IPC boundary refactor.');
