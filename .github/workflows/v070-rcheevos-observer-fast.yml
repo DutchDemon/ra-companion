@@ -9,6 +9,7 @@ on:
       - 'app/electron/services/observer-runtime-service.cjs'
       - 'scripts/build-runtime-helper.ps1'
       - 'scripts/test-observer-runtime-service.cjs'
+      - 'scripts/test-observer-runtime-integration.cjs'
       - '.github/workflows/v070-rcheevos-observer-fast.yml'
 
 concurrency:
@@ -39,6 +40,12 @@ jobs:
         run: |
           ./scripts/build-runtime-helper.ps1 -Configuration Release
           if ($LASTEXITCODE -ne 0) { throw 'Runtime helper build failed.' }
+
+      - name: Validate definition loader against native helper
+        shell: pwsh
+        run: |
+          node scripts/test-observer-runtime-integration.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer/native definition-loader integration failed.' }
 
       - name: Validate observer runtime self-test
         shell: pwsh
