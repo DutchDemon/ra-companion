@@ -35,14 +35,26 @@ $probeId = 700000001
 $startStageRaAddress = 0x0040AFC0
 $probeDefinition = 'M:0xH0040AFC0>=255'
 
+# Windows PowerShell 5.1 may serialize operator characters using JSON unicode escapes.
+# The native helper protocol currently expects the raw rcheevos ASCII definition, so
+# construct this diagnostic command literally. Electron's JSON.stringify path does
+# not have this PowerShell-specific behavior.
+$attachJson = '{"id":1,"command":"attachDolphin","pid":' + [string]([int]$target.Id) + '}'
+$readJson = '{"id":2,"command":"readMemory","address":4239296,"numBytes":13}'
+$activateJson = '{"id":3,"command":"activateAchievement","achievementId":700000001,"definition":"M:0xH0040AFC0>=255"}'
+$frame1Json = '{"id":4,"command":"evaluateFrame"}'
+$frame2Json = '{"id":5,"command":"evaluateFrame"}'
+$statusJson = '{"id":6,"command":"achievementStatus","achievementId":700000001}'
+$shutdownJson = '{"id":7,"command":"shutdown"}'
+
 $commands = @(
-    (@{ id = 1; command = 'attachDolphin'; pid = [int]$target.Id } | ConvertTo-Json -Compress),
-    (@{ id = 2; command = 'readMemory'; address = $startStageRaAddress; numBytes = 13 } | ConvertTo-Json -Compress),
-    (@{ id = 3; command = 'activateAchievement'; achievementId = $probeId; definition = $probeDefinition } | ConvertTo-Json -Compress),
-    (@{ id = 4; command = 'evaluateFrame' } | ConvertTo-Json -Compress),
-    (@{ id = 5; command = 'evaluateFrame' } | ConvertTo-Json -Compress),
-    (@{ id = 6; command = 'achievementStatus'; achievementId = $probeId } | ConvertTo-Json -Compress),
-    (@{ id = 7; command = 'shutdown' } | ConvertTo-Json -Compress)
+    $attachJson,
+    $readJson,
+    $activateJson,
+    $frame1Json,
+    $frame2Json,
+    $statusJson,
+    $shutdownJson
 )
 
 try {
