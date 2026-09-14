@@ -9,6 +9,7 @@ on:
       - 'app/**'
       - 'scripts/test-ra-runtime-data-service.cjs'
       - 'scripts/apply-v070-runtime-auth-data.cjs'
+      - 'scripts/fix-v070-runtime-auth-test-compat.cjs'
       - '.github/workflows/v070-runtime-auth-data.yml'
 
 permissions:
@@ -34,6 +35,8 @@ jobs:
         run: |
           node scripts/apply-v070-runtime-auth-data.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Runtime auth integration migration failed.' }
+          node scripts/fix-v070-runtime-auth-test-compat.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime auth settings compatibility migration failed.' }
 
       - name: Validate service behavior and syntax
         shell: pwsh
@@ -93,6 +96,7 @@ jobs:
         shell: bash
         run: |
           node scripts/apply-v070-runtime-auth-data.cjs
+          node scripts/fix-v070-runtime-auth-test-compat.cjs
           if git diff --quiet -- app/electron/main.cjs app/electron/ipc/register.cjs app/electron/preload.cjs app/src/global.d.ts app/src/AppPages.tsx; then
             echo 'Canonical source already contains the runtime auth integration.'
             exit 0
