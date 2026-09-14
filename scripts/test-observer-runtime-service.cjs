@@ -5,6 +5,8 @@ const { createObserverRuntimeService } = require(path.resolve(__dirname, '../app
 function createFakeRuntimeHelper(options = {}) {
   const commands = [];
   const active = new Set();
+  let helperPid = Number(options.helperPid || 9001);
+  let helperRunning = true;
   let memory = {
     ok: true,
     attached: true,
@@ -18,6 +20,19 @@ function createFakeRuntimeHelper(options = {}) {
     commands,
     active,
     setGameCode(code) { memory = { ...memory, gameCode: code }; },
+    restartHelper() {
+      helperPid += 1;
+      active.clear();
+      helperRunning = true;
+    },
+    stopHelper() { helperRunning = false; },
+    getStatus() {
+      return {
+        running: helperRunning,
+        ready: helperRunning,
+        pid: helperRunning ? helperPid : null,
+      };
+    },
     async request(command, payload = {}) {
       commands.push({ command, payload: { ...payload } });
       if (command === 'activateAchievement') {
@@ -87,6 +102,7 @@ async function testSuccessfulLoadAndEvaluation() {
   assert.deepEqual(loaded.achievementIds, [101, 102]);
   assert.equal(loaded.observerOnly, true);
   assert.equal(loaded.officialCompletionAuthority, 'retroachievements-server');
+  assert.equal(loaded.helperPid, 9001);
   assert.deepEqual([...runtimeHelper.active], [101, 102]);
 
   const frame = await observer.evaluateFrame();
@@ -155,11 +171,35 @@ async function testInputValidationHappensBeforeActivation() {
   assert.equal(runtimeHelper.commands.length, 0);
 }
 
+async function testHelperRestartInvalidatesLoadedDefinitions() {
+  const runtimeHelper = createFakeRuntimeHelper({ helperPid: 9100 });
+  const observer = createObserverRuntimeService({ runtimeHelper });
+
+  const loaded = await observer.loadGame({
+    gameId: 3934,
+    gameCode: 'GZ2E01',
+    achievements: [{ id: 501, definition: 'M:0xH0001>=10' }],
+  });
+  assert.equal(loaded.sealed, true);
+  assert.equal(loaded.helperPid, 9100);
+
+  runtimeHelper.restartHelper();
+  const commandCountBefore = runtimeHelper.commands.length;
+  await assert.rejects(
+    observer.evaluateFrame(),
+    /Runtime helper restarted after definitions were loaded/,
+  );
+  assert.equal(runtimeHelper.commands.length, commandCountBefore);
+  assert.equal(observer.getStatus().sealed, false);
+  assert.match(observer.getStatus().lastError, /definitions must be reloaded/);
+}
+
 (async () => {
   await testSuccessfulLoadAndEvaluation();
   await testRollbackOnDefinitionFailure();
   await testWrongGameIsBlockedBeforeEvaluation();
   await testInputValidationHappensBeforeActivation();
+  await testHelperRestartInvalidatesLoadedDefinitions();
   console.log('observer-runtime-service: all tests passed');
 })().catch((error) => {
   console.error(error);
