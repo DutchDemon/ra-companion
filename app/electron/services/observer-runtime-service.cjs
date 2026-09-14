@@ -1,5 +1,6 @@
 const MAX_UINT32 = 0xFFFFFFFF;
 const MAX_DEFINITION_BYTES = 24575;
+const MAX_RICH_PRESENCE_BYTES = 49151;
 const DEFAULT_LIVE_INTERVAL_MS = 16;
 const DEFAULT_LIVE_RETRY_MS = 250;
 const MAX_RECENT_EVENTS = 32;
@@ -36,6 +37,7 @@ function createObserverRuntimeService({
       loading: false,
       sealed: false,
       achievementIds: [],
+      richPresenceLoaded: false,
       helperPid: null,
       lastError: '',
     };
@@ -55,6 +57,8 @@ function createObserverRuntimeService({
       lastFrameAt: 0,
       lastEventAt: 0,
       lastFrameDurationMs: 0,
+      richPresence: '',
+      richPresenceUpdatedAt: 0,
       recentEvents: [],
       lastError: '',
     };
@@ -63,6 +67,7 @@ function createObserverRuntimeService({
   function publicLiveState() {
     const timestamp = now();
     const ageMs = liveState.lastFrameAt ? Math.max(0, timestamp - liveState.lastFrameAt) : null;
+    const richPresenceAgeMs = liveState.richPresenceUpdatedAt ? Math.max(0, timestamp - liveState.richPresenceUpdatedAt) : null;
     const elapsedMs = liveState.startedAt ? Math.max(0, timestamp - liveState.startedAt) : 0;
     const effectiveHz = elapsedMs > 0
       ? Math.round((liveState.frameCount * 1000 / elapsedMs) * 100) / 100
@@ -77,6 +82,8 @@ function createObserverRuntimeService({
       ...visible,
       effectiveHz,
       ageMs,
+      richPresenceAgeMs,
+      richPresenceLoaded: Boolean(state.richPresenceLoaded),
       stale: Boolean(liveState.active && ageMs !== null && ageMs > Math.max(1000, normalizedLiveRetryMs * 4)),
       statusCount: statuses.length,
       measuredAchievementCount,
@@ -96,6 +103,7 @@ function createObserverRuntimeService({
       loading: state.loading,
       sealed: state.sealed,
       achievementIds: [...state.achievementIds],
+      richPresenceLoaded: Boolean(state.richPresenceLoaded),
       helperPid: state.helperPid,
       lastError: state.lastError,
       live: publicLiveState(),
@@ -119,6 +127,15 @@ function createObserverRuntimeService({
       throw new Error('GameCube gameCode must be exactly six ASCII letters/numbers.');
     }
     return gameCode;
+  }
+
+  function normalizeRichPresenceScript(value) {
+    const script = String(value || '');
+    if (!script.trim()) return '';
+    if (Buffer.byteLength(script, 'utf8') > MAX_RICH_PRESENCE_BYTES) {
+      throw new Error('Rich Presence script exceeds the current helper protocol limit.');
+    }
+    return script;
   }
 
   function normalizeAchievements(value) {
@@ -205,16 +222,27 @@ function createObserverRuntimeService({
     }
   }
 
+  async function clearNativeRuntime() {
+    try {
+      await runtimeHelper.request('clearRuntime', {}, 5000);
+      return;
+    } catch {
+      // Compatibility fallback for an older helper. Older helpers cannot have
+      // the new Rich Presence state, so reset is sufficient there.
+    }
+    try {
+      await runtimeHelper.request('reset', {}, 5000);
+    } catch {
+      // Best effort during teardown.
+    }
+  }
+
   async function clearGame() {
     stopLiveEvaluation('', { reset: true });
     const ids = [...state.achievementIds];
     state = { ...state, loading: true, sealed: false, lastError: '' };
     await bestEffortDeactivate(ids);
-    try {
-      await runtimeHelper.request('reset', {}, 5000);
-    } catch {
-      // Reset is best effort after deactivation. No definition is considered loaded below.
-    }
+    await clearNativeRuntime();
     state = emptyState();
     return publicStatus();
   }
@@ -225,6 +253,7 @@ function createObserverRuntimeService({
     const gameId = normalizeGameId(input?.gameId);
     const gameCode = normalizeGameCode(input?.gameCode);
     const achievements = normalizeAchievements(input?.achievements);
+    const richPresenceScript = normalizeRichPresenceScript(input?.richPresenceScript);
 
     await clearGame();
     state = {
@@ -235,6 +264,7 @@ function createObserverRuntimeService({
       loading: true,
       sealed: false,
       achievementIds: [],
+      richPresenceLoaded: false,
       helperPid: null,
       lastError: '',
     };
@@ -253,6 +283,11 @@ function createObserverRuntimeService({
 
       if (activatedIds.length !== achievements.length) {
         throw new Error(`Observer game load was incomplete (${activatedIds.length}/${achievements.length}).`);
+      }
+
+      if (richPresenceScript) {
+        await runtimeHelper.request('activateRichPresence', { script: richPresenceScript }, 5000);
+        state = { ...state, richPresenceLoaded: true };
       }
 
       state = {
@@ -274,7 +309,7 @@ function createObserverRuntimeService({
       return publicStatus();
     } catch (error) {
       await bestEffortDeactivate(activatedIds);
-      try { await runtimeHelper.request('reset', {}, 5000); } catch { /* best effort */ }
+      await clearNativeRuntime();
       const message = error?.message || String(error || 'Observer game load failed.');
       state = { ...emptyState(), lastError: message };
       stopLiveEvaluation(message, { reset: true });
@@ -342,6 +377,26 @@ function createObserverRuntimeService({
     return Promise.all(ids.map((achievementId) => getAchievementStatus(achievementId)));
   }
 
+  async function getRichPresence() {
+    if (!state.richPresenceLoaded) {
+      return {
+        ok: true,
+        active: false,
+        text: '',
+        observerOnly: true,
+        officialCompletionAuthority: 'retroachievements-server',
+      };
+    }
+    await validateAttachedGame();
+    const result = await runtimeHelper.request('richPresence', {}, 5000);
+    return {
+      ...result,
+      text: String(result?.text || ''),
+      observerOnly: true,
+      officialCompletionAuthority: 'retroachievements-server',
+    };
+  }
+
   async function evaluateFrame() {
     const memory = await validateAttachedGame();
     const frame = await runtimeHelper.request('evaluateFrame', {}, 5000);
@@ -354,6 +409,8 @@ function createObserverRuntimeService({
 
     return {
       ...frame,
+      richPresenceActive: Boolean(frame?.richPresenceActive && state.richPresenceLoaded),
+      richPresence: state.richPresenceLoaded ? String(frame?.richPresence || '') : '',
       gameId: state.gameId,
       gameCode: state.gameCode || String(memory?.gameCode || ''),
       observerOnly: true,
@@ -409,6 +466,7 @@ function createObserverRuntimeService({
     const recentEvents = events.length
       ? [...liveState.recentEvents, ...events].slice(-MAX_RECENT_EVENTS)
       : liveState.recentEvents;
+    const richPresence = state.richPresenceLoaded ? String(frame?.richPresence || '') : '';
 
     liveState = {
       ...liveState,
@@ -421,6 +479,8 @@ function createObserverRuntimeService({
       lastFrameAt: sampledAt,
       lastEventAt: events.length ? sampledAt : liveState.lastEventAt,
       lastFrameDurationMs: Math.max(0, sampledAt - sampleStartedAt),
+      richPresence,
+      richPresenceUpdatedAt: state.richPresenceLoaded ? sampledAt : 0,
       recentEvents,
       lastError: '',
     };
@@ -508,6 +568,7 @@ function createObserverRuntimeService({
     getLiveState: publicLiveState,
     getAchievementStatus,
     getAchievementStatuses,
+    getRichPresence,
     validateAttachedGame,
     getStatus: publicStatus,
   };
