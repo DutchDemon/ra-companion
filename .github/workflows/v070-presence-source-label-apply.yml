@@ -1,0 +1,36 @@
+name: Apply Rich Presence Source Label Fix
+
+on:
+  push:
+    branches:
+      - feature/v0.7.0-rich-presence-ui
+    paths:
+      - scripts/apply-presence-source-label.py
+      - .github/workflows/v070-presence-source-label-apply.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/v0.7.0-rich-presence-ui
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply exact source label patch
+        run: python scripts/apply-presence-source-label.py
+      - name: Commit intended files only
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git config core.whitespace cr-at-eol
+          git add app/src/main.tsx app/src/AppPages.tsx scripts/test-rich-presence-ui-contract.cjs
+          git add -u .github/workflows/v070-presence-source-label-apply.yml scripts/apply-presence-source-label.py
+          git diff --cached --check
+          git commit -m "fix: label the selected Rich Presence source"
+          git push origin HEAD:feature/v0.7.0-rich-presence-ui
