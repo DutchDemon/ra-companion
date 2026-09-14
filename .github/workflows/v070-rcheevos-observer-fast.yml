@@ -7,6 +7,7 @@ on:
     paths:
       - 'native/rcheevos-runtime-helper/**'
       - 'app/electron/services/observer-runtime-service.cjs'
+      - 'app/src/__tests__/v070.observer-definition-layer.test.ts'
       - 'scripts/build-runtime-helper.ps1'
       - 'scripts/test-observer-runtime-service.cjs'
       - 'scripts/test-observer-runtime-integration.cjs'
@@ -19,13 +20,15 @@ concurrency:
 jobs:
   observer-helper:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
 
       - name: Validate observer game-definition session service
         shell: pwsh
@@ -34,6 +37,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Observer runtime service syntax check failed.' }
           node scripts/test-observer-runtime-service.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Observer runtime service tests failed.' }
+
+      - name: Validate app regressions and production build
+        shell: pwsh
+        working-directory: app
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed.' }
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript check failed.' }
+          npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw 'Regression tests failed.' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Production build failed.' }
 
       - name: Build pinned rcheevos helper
         shell: pwsh
