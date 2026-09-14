@@ -797,6 +797,27 @@ body { margin: 0; background: radial-gradient(circle at 72% -10%, rgba(27, 115, 
 /* v0.6.0 — live companion polish + reliability */
 .v6-session-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .v6-session-grid .v6-context-stat { grid-column: span 2; }
+.v6-overlay-live-stats { display: flex; flex-wrap: wrap; gap: 6px; padding: 7px 10px; border-radius: 10px; background: rgba(255,255,255,.045); font-size: 11px; font-weight: 700; }
+.v6-overlay-live-stats span { white-space: nowrap; }
+.v6-hotkey-diagnostics { display: grid; gap: 8px; }
+.v6-hotkey-diagnostics > span { display: block; }
+.v6-shortcut-editor { margin-top: 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.v6-shortcut-editor label { display: grid; gap: 6px; font-size: 12px; font-weight: 700; }
+.v6-shortcut-editor input { width: 100%; }
+.v6-shortcut-actions { grid-column: 1 / -1; display: flex; gap: 8px; justify-content: flex-end; }
+.v6-shortcut-editor > small { grid-column: 1 / -1; }
+.v6-account-connection { display: grid; gap: 14px; }
+.v6-account-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.v6-account-facts > div { padding: 10px 12px; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; background: rgba(255,255,255,.025); display: grid; gap: 4px; }
+.v6-account-facts span { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; opacity: .62; }
+.v6-account-facts b { font-size: 13px; overflow-wrap: anywhere; }
+.v6-account-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.v6-inline-error { margin: 0; padding: 10px 12px; }
+.danger-button { border-color: rgba(255,110,110,.28) !important; }
+@media (max-width: 1150px) {
+  .v6-session-grid, .v6-account-facts, .v6-shortcut-editor { grid-template-columns: 1fr; }
+  .v6-session-grid .v6-context-stat { grid-column: auto; }
+}
 
 
 /* v0.6.1 — persistent multi-game achievement library */
@@ -1064,3 +1085,30 @@ body {
 .pill.rp-pill { color: #6ee7ff; border-color: rgba(110,231,255,.32); background: rgba(110,231,255,.09); }
 .overlay-shell.compact .v7-overlay-rich-presence { margin: 6px 0; padding: 6px 8px; }
 .overlay-shell.compact .v7-overlay-rich-presence b { -webkit-line-clamp: 1; font-size: 9px; }
+
+/* v0.7.0 — live measured achievement counters */
+.v7-session-counter-block { margin: 2px 18px 12px; padding: 10px 12px; border: 1px solid rgba(110,231,255,.14); border-radius: 11px; background: rgba(110,231,255,.035); }
+.v7-live-counter-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
+.v7-live-counter-heading > span { color: #6ee7ff; font-size: 8px; font-weight: 900; letter-spacing: 1.05px; }
+.v7-live-counter-heading > small { color: #8295a5; font-size: 9px; font-weight: 700; }
+.v7-live-counter-list { display: grid; gap: 8px; }
+.v7-live-counter-list.compact { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.v7-live-counter-card { min-width: 0; padding: 9px 10px; border: 1px solid rgba(255,255,255,.075); border-radius: 9px; background: rgba(18,18,18,.56); }
+.v7-live-counter-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.v7-live-counter-row b { min-width: 0; color: #f2f7fb; font-size: 11px; font-weight: 780; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v7-live-counter-row strong { color: #6ee7ff; font-size: 11px; white-space: nowrap; }
+.v7-live-counter-card > small { display: block; margin-top: 5px; color: #778b9c; font-size: 9px; }
+.v7-live-counter-track { height: 4px; margin-top: 7px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.07); }
+.v7-live-counter-track > i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #38bdf8, #6ee7ff); }
+.v7-live-progress-panel .v5-card-heading { margin-bottom: 10px; }
+.v7-live-progress-panel h3 { max-width: 680px; font-size: 13px; }
+.v7-overlay-live-counters { margin: 0 0 9px; padding: 8px 9px; border: 1px solid rgba(110,231,255,.13); border-radius: 10px; background: rgba(110,231,255,.035); display: grid; gap: 6px; }
+.v7-overlay-live-counters .v7-live-counter-heading { margin-bottom: 1px; }
+.v7-overlay-counter { display: grid; gap: 4px; }
+.v7-overlay-counter > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.v7-overlay-counter b { min-width: 0; color: #e8f1f7; font-size: 9px; font-weight: 760; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v7-overlay-counter strong { color: #6ee7ff; font-size: 9px; white-space: nowrap; }
+.v7-overlay-counter > small { color: #708392; font-size: 8px; }
+.overlay-shell.compact .v7-overlay-live-counters { padding: 6px 7px; gap: 5px; }
+.overlay-shell.compact .v7-overlay-live-counters .v7-overlay-counter:nth-child(n+4) { display: none; }
+@media (max-width: 1180px) { .v7-live-counter-list.compact { grid-template-columns: 1fr; } }
