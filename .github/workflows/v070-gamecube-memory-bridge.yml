@@ -1,0 +1,186 @@
+name: v0.7 GameCube Memory Bridge
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/v0.7.0-gamecube-memory-bridge]
+    paths:
+      - 'native/rcheevos-runtime-helper/**'
+      - 'scripts/build-runtime-helper.ps1'
+      - 'app/electron/services/runtime-helper-service.cjs'
+      - 'app/tools/ram-diagnostics.ps1'
+      - 'app/src/__tests__/**'
+      - 'docs/V0.7-GAMECUBE-MEMORY-BRIDGE.md'
+      - '.github/workflows/v070-gamecube-memory-bridge.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v070-gamecube-memory-bridge-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build pinned rcheevos runtime helper
+        shell: pwsh
+        run: |
+          ./scripts/build-runtime-helper.ps1 -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper build failed.' }
+
+      - name: Validate parser and GameCube mapping self-test
+        shell: pwsh
+        run: |
+          $helper = (Resolve-Path 'app/tools/ra-runtime-helper.exe').Path
+          $raw = & $helper --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper self-test failed.' }
+          $selfTest = $raw | ConvertFrom-Json
+          if (-not $selfTest.ok) { throw 'Runtime helper self-test reported failure.' }
+          if (-not $selfTest.runtimeParser) { throw 'rcheevos parser self-test failed.' }
+          if (-not $selfTest.gameCubeMemoryMapping) { throw 'GameCube memory mapping self-test failed.' }
+          if (-not $selfTest.readOnlyBridge) { throw 'Helper did not report a read-only bridge.' }
+          if ($selfTest.rcheevosTag -ne 'v12.5.0') { throw "Unexpected rcheevos tag: $($selfTest.rcheevosTag)" }
+          $raw | Set-Content 'gamecube-memory-self-test.txt'
+
+      - name: Exercise additive memory protocol without Dolphin
+        shell: pwsh
+        run: |
+          $helper = (Resolve-Path 'app/tools/ra-runtime-helper.exe').Path
+          $lines = @(
+            '{"id":1,"command":"ping"}',
+            '{"id":2,"command":"status"}',
+            '{"id":3,"command":"memoryStatus"}',
+            '{"id":4,"command":"readMemory","address":0,"numBytes":4}',
+            '{"id":5,"command":"reset"}',
+            '{"id":6,"command":"shutdown"}'
+          ) | & $helper
+          if ($LASTEXITCODE -ne 0) { throw "Runtime helper protocol smoke test failed with exit code $LASTEXITCODE." }
+          $lines | Set-Content 'gamecube-memory-protocol.txt'
+          $messages = @($lines | ForEach-Object { $_ | ConvertFrom-Json })
+          $ready = $messages | Where-Object { $_.type -eq 'ready' } | Select-Object -First 1
+          if (-not $ready -or -not $ready.runtimeInitialized -or -not $ready.gameCubeMemoryBridge) {
+            throw 'Runtime helper did not advertise the GameCube memory bridge.'
+          }
+          $memoryStatus = $messages | Where-Object { $_.command -eq 'memoryStatus' } | Select-Object -First 1
+          if (-not $memoryStatus -or -not $memoryStatus.ok -or $memoryStatus.attached) {
+            throw 'Unattached memoryStatus contract is invalid.'
+          }
+          if (-not $memoryStatus.readOnly -or $memoryStatus.memorySize -ne 0x01800000) {
+            throw 'GameCube read-only memory metadata is invalid.'
+          }
+          $read = $messages | Where-Object { $_.command -eq 'readMemory' } | Select-Object -First 1
+          if (-not $read -or $read.ok -ne $false) {
+            throw 'readMemory must fail safely while Dolphin is unattached.'
+          }
+          foreach ($command in @('ping', 'status', 'reset', 'shutdown')) {
+            $response = $messages | Where-Object { $_.type -eq 'response' -and $_.command -eq $command } | Select-Object -First 1
+            if (-not $response -or -not $response.ok) { throw "Runtime helper command failed: $command" }
+          }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Strict syntax, regression and production checks
+        working-directory: app
+        shell: pwsh
+        run: |
+          node --check electron/main.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'electron/main.cjs syntax check failed.' }
+          node --check electron/services/runtime-helper-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'runtime-helper-service syntax check failed.' }
+          npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw "Regression tests failed with exit code $LASTEXITCODE." }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw "Production build failed with exit code $LASTEXITCODE." }
+
+      - name: Build NSIS installer with memory bridge
+        working-directory: app
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npx electron-builder --win nsis --x64 --publish never
+          if ($LASTEXITCODE -ne 0) { throw "electron-builder failed with exit code $LASTEXITCODE." }
+
+      - name: Verify packaged helper and Defender scan
+        shell: pwsh
+        run: |
+          $packagedHelper = 'app/release/win-unpacked/resources/app/tools/ra-runtime-helper.exe'
+          if (-not (Test-Path $packagedHelper)) { throw 'Packaged RA Companion is missing ra-runtime-helper.exe.' }
+          $selfTestOutput = & $packagedHelper --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged runtime helper self-test failed.' }
+          $selfTest = $selfTestOutput | ConvertFrom-Json
+          if (-not $selfTest.ok -or -not $selfTest.gameCubeMemoryMapping -or -not $selfTest.readOnlyBridge) {
+            throw 'Packaged runtime helper reported an invalid GameCube memory self-test.'
+          }
+
+          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq 'RA Companion Setup 0.6.4.exe' } | Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer was not generated.' }
+
+          $report = 'app/release/defender-scan.txt'
+          "Installer: $($installer.FullName)" | Set-Content $report
+          "Helper: $((Resolve-Path $packagedHelper).Path)" | Add-Content $report
+          $status = Get-MpComputerStatus -ErrorAction Stop
+          "AntivirusEnabled: $($status.AntivirusEnabled)" | Add-Content $report
+          "AntivirusSignatureVersion: $($status.AntivirusSignatureVersion)" | Add-Content $report
+          if ($status.AntivirusEnabled) {
+            Start-MpScan -ScanType CustomScan -ScanPath $installer.FullName -ErrorAction Stop
+            Start-MpScan -ScanType CustomScan -ScanPath (Resolve-Path $packagedHelper).Path -ErrorAction Stop
+            Start-Sleep -Seconds 2
+            $hits = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
+              ($_.Resources -join ';') -like "*$($installer.Name)*" -or ($_.Resources -join ';') -like '*ra-runtime-helper.exe*'
+            })
+            if ($hits.Count -gt 0) { throw 'Microsoft Defender detected a GameCube memory-bridge validation artifact.' }
+          }
+          'RESULT: NO DETECTION' | Add-Content $report
+
+      - name: Upload validation build
+        uses: actions/upload-artifact@v4
+        with:
+          name: v070-gamecube-memory-bridge-validation
+          if-no-files-found: error
+          path: |
+            app/release/RA Companion Setup 0.6.4.exe
+            app/release/RA Companion Setup 0.6.4.exe.blockmap
+            app/release/latest.yml
+            app/release/defender-scan.txt
+            app/tools/ra-runtime-helper.exe
+            app/tools/ram-diagnostics.ps1
+            gamecube-memory-self-test.txt
+            gamecube-memory-protocol.txt
+
+  clamav:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: v070-gamecube-memory-bridge-validation
+          path: artifact
+      - name: ClamAV scan
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clamav clamav-freshclam
+          sudo systemctl stop clamav-freshclam.service || true
+          sudo pkill -x freshclam || true
+          sudo freshclam
+          INSTALLER=$(find artifact -type f -name 'RA Companion Setup 0.6.4.exe' -print -quit)
+          HELPER=$(find artifact -type f -name 'ra-runtime-helper.exe' -print -quit)
+          test -n "$INSTALLER"
+          test -n "$HELPER"
+          clamscan "$INSTALLER" "$HELPER" | tee artifact/clamav-scan.txt
+          test ${PIPESTATUS[0]} -eq 0
