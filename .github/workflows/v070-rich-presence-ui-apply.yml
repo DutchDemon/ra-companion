@@ -28,6 +28,7 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git config core.whitespace cr-at-eol
           git add app/electron/main.cjs app/src/main.tsx app/src/AppPages.tsx app/src/global.d.ts app/src/styles.css scripts/test-rich-presence-ui-contract.cjs
           git add -u .github/workflows/v070-rich-presence-ui-apply.yml scripts/apply-rich-presence-ui.py
           git diff --cached --check
