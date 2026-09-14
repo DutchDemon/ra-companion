@@ -20,7 +20,8 @@ describe('v0.5.9 authoritative RetroAchievements progress', () => {
   });
 
   it('supports a forced authoritative RA refresh end-to-end', () => {
-    expect(electron).toContain('async function getRaProgress(gameId = TWILIGHT_PRINCESS_GAME_ID, force = false)');
+    expect(electron).toContain('async function getRaProgress(gameId, force = false)');
+    expect(electron).not.toContain('getRaProgress(gameId = TWILIGHT_PRINCESS_GAME_ID');
     expect(electron).toContain('getRaProgress(gameId, forceRa)');
     expect(ipc).toContain("ipcMain.handle('snapshot:get', (_event, forceRa) => handlers.getSnapshot(Boolean(forceRa)))");
     expect(preload).toContain("getSnapshot: (forceRa = false) => ipcRenderer.invoke('snapshot:get', forceRa)");
