@@ -23,8 +23,9 @@ describe('v0.7 secure runtime auth and official game-data layer', () => {
     expect(service).not.toContain('passwordEncrypted');
     expect(service).not.toContain('raw.password');
     expect(service).not.toContain('apiKey: credential.token');
-    expect(settings).toContain('RA Companion never stores your password.');
-    expect(settings).toContain('Separate from your Web API key.');
+    expect(settings).toContain('never stores the password');
+    expect(settings).toContain('Web API key');
+    expect(settings).toContain('Live runtime & Rich Presence');
   });
 
   it('has no gameplay-session or submission request surface', () => {
