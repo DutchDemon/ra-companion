@@ -323,6 +323,11 @@ function Overlay() {
     grottoId: effectiveRam?.grottoId,
     storyFlags: effectiveRam?.storyFlags,
     stateFlags: effectiveRam?.stateFlags,
+    faronTears: effectiveRam?.faronTears,
+    eldinTears: effectiveRam?.eldinTears,
+    lanayruTears: effectiveRam?.lanayruTears,
+    fusedShadows: effectiveRam?.fusedShadows,
+    mirrorShards: effectiveRam?.mirrorShards,
   }), [
     achievements,
     presenceMessage,
@@ -514,6 +519,7 @@ function Overlay() {
               <div className="context-sections">
                 <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="danger" title={ramLive ? '⚠ Missable now' : '⚠ Missable now / soon'} achievements={companion.missables} ram={effectiveRam} states={achievementStates} />
                 <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="current" title={companion.context.boss ? `🎯 Boss Now · ${companion.context.boss}` : '🎯 Current Story Beat'} achievements={companion.current} ram={effectiveRam} states={achievementStates} />
+                <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="opportunity" title="◇ Area Opportunity" achievements={companion.areaOpportunities || []} ram={effectiveRam} states={achievementStates} />
                 <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="coming" title="◉ Next Story Beat" achievements={pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : companion.comingUp} ram={effectiveRam} states={achievementStates} />
                 <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="coming" title="◉ Story / RA context" achievements={fallbackAchievements} ram={effectiveRam} states={achievementStates} />
                 <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="current" title="◈ Live RAM Opportunity" achievements={deepLiveAchievements} ram={effectiveRam} states={achievementStates} />
@@ -646,6 +652,11 @@ function App() {
     grottoId: effectiveRam?.grottoId,
     storyFlags: effectiveRam?.storyFlags,
     stateFlags: effectiveRam?.stateFlags,
+    faronTears: effectiveRam?.faronTears,
+    eldinTears: effectiveRam?.eldinTears,
+    lanayruTears: effectiveRam?.lanayruTears,
+    fusedShadows: effectiveRam?.fusedShadows,
+    mirrorShards: effectiveRam?.mirrorShards,
   }), [
     achievements,
     presenceMessage,

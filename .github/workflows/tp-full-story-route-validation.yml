@@ -1,0 +1,53 @@
+name: TP Full Story Route Validation
+
+on:
+  push:
+    branches:
+      - feature/tp-full-story-route
+      - main
+    paths:
+      - 'app/src/main.tsx'
+      - 'app/src/profiles/registry.ts'
+      - 'app/src/profiles/twilightPrincessStoryContext.ts'
+      - 'app/src/profiles/twilightPrincessStoryRoute.ts'
+      - 'app/src/__tests__/v080.story-route.test.ts'
+      - '.github/workflows/tp-full-story-route-validation.yml'
+  pull_request:
+    paths:
+      - 'app/src/main.tsx'
+      - 'app/src/profiles/registry.ts'
+      - 'app/src/profiles/twilightPrincessStoryContext.ts'
+      - 'app/src/profiles/twilightPrincessStoryRoute.ts'
+      - 'app/src/__tests__/v080.story-route.test.ts'
+      - '.github/workflows/tp-full-story-route-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        working-directory: app
+        run: npm install
+      - name: Focused story-route regression
+        working-directory: app
+        run: npx vitest run src/__tests__/v080.story-route.test.ts --environment jsdom
+      - name: TypeScript
+        working-directory: app
+        run: npm run typecheck
+      - name: Full regression suite
+        working-directory: app
+        run: npm run test:regressions
+      - name: Preserve RA completion authority boundary
+        run: |
+          grep -Fq 'const progress = baseProgress;' app/electron/main.cjs
+          ! grep -RniE 'startsession|awardachievement|submitlbentry' app/electron/services app/electron/game-profiles
+      - name: Production build
+        working-directory: app
+        run: npm run build

@@ -1,10 +1,10 @@
 import {
-  buildTwilightContext,
   earnedHardcore,
   isFaronTearAchievement,
   isFaronTearObjectiveActive,
   isMissableAchievement,
 } from './twilightPrincess';
+import { buildTwilightStoryAwareContext } from './twilightPrincessStoryContext';
 import { getTwilightMissableGuide } from './twilightPrincessGuide';
 import { buildTwilightAchievementStates, type TwilightAchievementState } from './twilightPrincessState';
 
@@ -214,7 +214,7 @@ export const TWILIGHT_PRINCESS_PROFILE: RendererGameProfile = Object.freeze({
   matchesRam(ram) {
     return Boolean(ram?.attached && !ram?.stale && TWILIGHT_PRINCESS_GAME_CODES.includes(String(ram?.gameCode || '').trim()));
   },
-  buildContext: buildTwilightContext,
+  buildContext: buildTwilightStoryAwareContext,
   buildAchievementStates: buildTwilightAchievementStates,
   getMissableGuide: getTwilightMissableGuide,
   isMissableAchievement,
@@ -253,6 +253,8 @@ export function buildProfileContext(profile: RendererGameProfile | null | undefi
     missables: [],
     current: [],
     comingUp: [],
+    areaOpportunities: [],
+    storyChapter: null,
     relevantAll: [],
     routeLabel: presenceMessage ? 'RetroAchievements context' : 'Game context',
   };
