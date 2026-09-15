@@ -7,11 +7,13 @@ on:
     paths:
       - 'app/**'
       - 'scripts/test-*.cjs'
+      - '.github/workflows/v072-ra-setup-faron.yml'
   pull_request:
     branches: [main]
     paths:
       - 'app/**'
       - 'scripts/test-*.cjs'
+      - '.github/workflows/v072-ra-setup-faron.yml'
 
 permissions:
   contents: read
@@ -24,11 +26,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: app/package-lock.json
       - name: Install dependencies
         working-directory: app
-        run: npm ci
+        run: npm install --no-audit --no-fund
       - name: v0.7.2 focused regression
         working-directory: app
         run: npx vitest run src/__tests__/v072.ra-setup-faron.test.ts --environment jsdom
