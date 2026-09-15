@@ -1,6 +1,6 @@
 {
   "name": "ra-companion",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "description": "RetroAchievements companion with live read-only Dolphin shared-memory context",
   "main": "electron/main.cjs",
