@@ -1,3 +1,4 @@
+// v0.7.2 validation anchor: this file intentionally exercises the final branch state.
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
