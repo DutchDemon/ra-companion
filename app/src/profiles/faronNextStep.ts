@@ -1,5 +1,10 @@
 import type { TwilightAchievementState } from './twilightPrincessState';
 
+export const FARON_TEAR_ACHIEVEMENT_ID = 416987;
+export const FARON_PREVIOUS_STORY_ACHIEVEMENT_ID = 398928;
+
+const FARON_ROUTE_STAGES = new Set(['R_SP107', 'F_SP102', 'F_SP108', 'R_SP108', 'D_SB10']);
+
 function normalize(value: unknown) {
   return String(value ?? '')
     .normalize('NFD')
@@ -10,20 +15,41 @@ function normalize(value: unknown) {
     .trim();
 }
 
+function achievementId(achievement: any) {
+  return Number(achievement?.ID ?? achievement?.id ?? 0) || 0;
+}
+
 function earnedHardcore(achievement: any) {
   return Boolean(achievement?.DateEarnedHardcore || achievement?.dateEarnedHardcore);
 }
 
-export function isPendingFaronVesselObjective(achievement: any, ram?: Snapshot['ram']) {
-  if (!ram?.attached || ram?.stale || ram.gameCode !== 'GZ2E01') return false;
-  if (ram.storyFlags?.faronTwilightStarted !== true || ram.storyFlags?.faronVesselObtained === true) return false;
-  if (earnedHardcore(achievement)) return false;
+function isFaronTearAchievement(achievement: any) {
+  if (achievementId(achievement) === FARON_TEAR_ACHIEVEMENT_ID) return true;
   const text = normalize(`${achievement?.Title ?? achievement?.title ?? ''} ${achievement?.Description ?? achievement?.description ?? ''}`);
-  return /tears? of light/.test(text) && /return the light to faron/.test(text);
+  return /you unlock this door with the key of imagination/.test(text)
+    || (/tears? of light/.test(text) && /return the light to faron/.test(text));
+}
+
+function routeHasReachedFaronTwilight(achievements: any[], ram?: Snapshot['ram']) {
+  if (!ram) return false;
+  if (ram.storyFlags?.faronTwilightStarted === true) return true;
+  if (FARON_ROUTE_STAGES.has(String(ram.stageCode || '').trim())) return true;
+  return achievements.some((achievement) => achievementId(achievement) === FARON_PREVIOUS_STORY_ACHIEVEMENT_ID && earnedHardcore(achievement));
+}
+
+export function isPendingFaronVesselObjective(achievement: any, ram?: Snapshot['ram'], achievements: any[] = [achievement]) {
+  if (!ram?.attached || ram?.stale || ram.gameCode !== 'GZ2E01') return false;
+  if (!isFaronTearAchievement(achievement) || earnedHardcore(achievement)) return false;
+  if (ram.storyFlags?.faronVesselObtained === true) return false;
+  if (ram.storyFlags?.forestTempleEntered === true || ram.storyFlags?.forestTempleCleared === true) return false;
+  return routeHasReachedFaronTwilight(achievements, ram);
 }
 
 export function findPendingFaronVesselObjective(achievements: any[], ram?: Snapshot['ram']) {
-  return achievements.find((achievement) => isPendingFaronVesselObjective(achievement, ram)) || null;
+  const target = achievements.find((achievement) => achievementId(achievement) === FARON_TEAR_ACHIEVEMENT_ID)
+    || achievements.find((achievement) => isFaronTearAchievement(achievement));
+  if (!target) return null;
+  return isPendingFaronVesselObjective(target, ram, achievements) ? target : null;
 }
 
 export function pendingFaronVesselState(): TwilightAchievementState {
