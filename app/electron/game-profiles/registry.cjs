@@ -1,9 +1,11 @@
 'use strict';
 
 const { TWILIGHT_PRINCESS_PROFILE } = require('./twilight-princess.cjs');
+const { WIND_WAKER_PROFILE } = require('./wind-waker.cjs');
 
 const GAME_PROFILES = Object.freeze([
   TWILIGHT_PRINCESS_PROFILE,
+  WIND_WAKER_PROFILE,
 ]);
 
 function getGameProfileByRaGameId(gameId) {
