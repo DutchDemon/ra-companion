@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTwilightContext } from '../profiles/twilightPrincess';
+import { buildTwilightStoryAwareContext } from '../profiles/twilightPrincessStoryContext';
 import { resolveTwilightStoryChapter, TWILIGHT_STORY_CHAPTERS } from '../profiles/twilightPrincessStoryRoute';
 
 function achievement(id: number, title: string, description: string, type = '', displayOrder = id) {
@@ -35,7 +35,7 @@ describe('full Twilight Princess story-route companion', () => {
       mirrorShards: 0,
     };
 
-    const context = buildTwilightContext(achievements, '🐺Link 🗺️Kakariko Village 💧4/16 Tears', ram);
+    const context = buildTwilightStoryAwareContext(achievements, '🐺Link 🗺️Kakariko Village 💧4/16 Tears', ram);
     expect(context.current.map((item: any) => item.Title)).toEqual(['Beyond Is a Dimension of Sound, Sight and Mind']);
     expect(context.areaOpportunities.map((item: any) => item.Title)).toContain('Village Secrets');
     expect(context.missables.map((item: any) => item.Title)).not.toContain('Jump on the Bandwagon');
@@ -44,7 +44,7 @@ describe('full Twilight Princess story-route companion', () => {
 
   it('only opens Jump on the Bandwagon in the later Lanayru escort window', () => {
     const bandwagon = achievement(410003, 'Jump on the Bandwagon', 'Guide the Zora-prince escort wagon to Kakariko Village without letting it catch fire', 'missable');
-    const context = buildTwilightContext([bandwagon], '🧝Link 🗺️Kakariko Village', {
+    const context = buildTwilightStoryAwareContext([bandwagon], '🧝Link 🗺️Kakariko Village', {
       live: true,
       stageCode: 'F_SP109',
       storyFlags: {
