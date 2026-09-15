@@ -89,6 +89,9 @@ declare global {
     protocolVersion: number | null;
     rcheevosVersion: string;
     rcheevosTag: string;
+    gameCubeMemoryBridge?: boolean;
+    dolphinAttached?: boolean;
+    dolphinPid?: number | null;
     pid: number | null;
     lastError: string;
   }
