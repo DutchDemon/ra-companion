@@ -6,6 +6,7 @@ on:
       - feature/v0.7.2-ra-setup-faron-diagnostics
     paths:
       - scripts/patch-v072.py
+      - .github/workflows/temp-v072-patch.yml
 
 permissions:
   contents: write
