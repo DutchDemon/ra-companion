@@ -253,6 +253,8 @@ export function buildProfileContext(profile: RendererGameProfile | null | undefi
     missables: [],
     current: [],
     comingUp: [],
+    areaOpportunities: [],
+    storyChapter: null,
     relevantAll: [],
     routeLabel: presenceMessage ? 'RetroAchievements context' : 'Game context',
   };

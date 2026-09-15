@@ -1,3 +1,12 @@
+import {
+  findActiveTearHunt,
+  isAreaOpportunityAchievement,
+  isStoryProgressionAchievement,
+  missableStoryWindowDecision,
+  resolveTwilightStoryChapter,
+  type TwilightStoryChapter,
+} from './twilightPrincessStoryRoute';
+
 export type PresenceKind = 'dungeon' | 'area' | 'building' | 'cave' | 'unknown';
 
 export interface TwilightPresenceContext {
@@ -22,6 +31,11 @@ export interface RamBeatContext {
   grottoId?: number | null;
   storyFlags?: Record<string, boolean>;
   stateFlags?: Record<string, boolean>;
+  faronTears?: number | null;
+  eldinTears?: number | null;
+  lanayruTears?: number | null;
+  fusedShadows?: number | null;
+  mirrorShards?: number | null;
 }
 
 export type ContextSource = 'rich-presence' | 'story-route' | 'hybrid' | 'none';
@@ -32,6 +46,8 @@ export interface ContextBuckets {
   missables: any[];
   current: any[];
   comingUp: any[];
+  areaOpportunities: any[];
+  storyChapter: TwilightStoryChapter | null;
   source: ContextSource;
   routeLabel: string;
 }
@@ -204,6 +220,8 @@ const MISSABLE_CONTEXT_RULES: Record<string, MissableContextRule> = {
 
 function liveRuleAllowsAchievement(achievement: any, ramBeat?: RamBeatContext) {
   if (!ramBeat?.live) return true;
+  const storyWindowDecision = missableStoryWindowDecision(achievement, ramBeat);
+  if (storyWindowDecision !== null) return storyWindowDecision;
   const rule = MISSABLE_CONTEXT_RULES[achievementTitle(achievement)];
   if (!rule) return true;
 
@@ -304,8 +322,7 @@ export function isMissableAchievement(achievement: any) {
 }
 
 function isProgressionAchievement(achievement: any) {
-  const type = achievementType(achievement);
-  return type === 'progression' || type === 'win_condition';
+  return isStoryProgressionAchievement(achievement);
 }
 
 function scoreAchievement(achievement: any, context: TwilightPresenceContext) {
@@ -495,6 +512,8 @@ export function buildTwilightContext(achievements: any[], presenceMessage: strin
   const context = parseTwilightPresence(presenceMessage);
   const route = buildStoryRoute(achievements);
   const strictRamBeat = Boolean(ramBeat?.live && ramBeat?.stageCode);
+  const storyChapter = resolveTwilightStoryChapter(ramBeat);
+  const activeTearHunt = findActiveTearHunt(achievements, ramBeat);
 
   const scored = context.label
     ? achievements
@@ -502,8 +521,9 @@ export function buildTwilightContext(achievements: any[], presenceMessage: strin
           const baseScore = scoreAchievement(achievement, context);
           const explicitLiveRule = strictRamBeat && Boolean(MISSABLE_CONTEXT_RULES[achievementTitle(achievement)]);
           const liveRuleScore = explicitLiveRule && liveRuleAllowsAchievement(achievement, ramBeat) ? 450 : 0;
-          const tearObjectiveScore = strictRamBeat && isFaronTearObjectiveRelevant(achievement, ramBeat) ? 500 : 0;
-          return { achievement, score: Math.max(baseScore, liveRuleScore, tearObjectiveScore) };
+          const guideTearScore = strictRamBeat && activeTearHunt?.achievement === achievement ? 700 : 0;
+          const legacyFaronTearScore = strictRamBeat && isFaronTearObjectiveRelevant(achievement, ramBeat) ? 500 : 0;
+          return { achievement, score: Math.max(baseScore, liveRuleScore, guideTearScore, legacyFaronTearScore) };
         })
         .filter((item) => item.score > 0 && (!strictRamBeat || strictBeatAchievementAllowed(item.achievement, context, ramBeat)))
         .sort((a, b) => b.score - a.score || Number(b.achievement?.Points ?? b.achievement?.points ?? 0) - Number(a.achievement?.Points ?? a.achievement?.points ?? 0))
@@ -523,6 +543,7 @@ export function buildTwilightContext(achievements: any[], presenceMessage: strin
 
   let current: any[] = [];
   let comingUp: any[] = [];
+  let areaOpportunities: any[] = [];
   let rpMissables: any[] = [];
 
   if (context.label && context.boss) {
@@ -542,7 +563,13 @@ export function buildTwilightContext(achievements: any[], presenceMessage: strin
       .filter((achievement) => !bossRelated.includes(achievement) && isMissableAchievement(achievement))
       .slice(0, strictRamBeat ? 4 : 1);
     const used = new Set([...bossRelated, ...rpMissables]);
-    current = rpLocked.filter((achievement) => !used.has(achievement)).slice(0, 3);
+    const contextualOrdinary = rpLocked.filter((achievement) => !used.has(achievement));
+    current = strictRamBeat
+      ? contextualOrdinary.filter((achievement) => isProgressionAchievement(achievement)).slice(0, 2)
+      : contextualOrdinary.slice(0, 3);
+    areaOpportunities = strictRamBeat
+      ? contextualOrdinary.filter((achievement) => isAreaOpportunityAchievement(achievement)).slice(0, 3)
+      : [];
     // In strict RAM mode keep the nearest same-dungeon boss missable visible as
     // "coming up" rather than dropping it completely. It only becomes an active
     // missable when RAM enters that exact boss stage.
@@ -551,10 +578,13 @@ export function buildTwilightContext(achievements: any[], presenceMessage: strin
       : bossRelated.slice(0, 1);
   }
 
-  // During the Faron Tear hunt the Vessel achievement is the story objective.
-  // Keep missables in their own warning section, but do not mix unrelated
-  // location matches into the Current Story Beat slot.
-  if (activeFaronTearObjectives.length) {
+  // Tear hunts are explicit walkthrough story phases. Once the matching Vessel
+  // is owned, the province Tear achievement becomes Current Story Beat regardless
+  // of other optional achievements which happen to mention the same area.
+  if (activeTearHunt?.achievement && !earnedHardcore(activeTearHunt.achievement)) {
+    current = [activeTearHunt.achievement];
+    areaOpportunities = areaOpportunities.filter((achievement) => achievement !== activeTearHunt.achievement);
+  } else if (activeFaronTearObjectives.length) {
     current = activeFaronTearObjectives.slice(0, 1);
   } else if (upcomingFaronTearObjectives.length) {
     comingUp = upcomingFaronTearObjectives.slice(0, 1);
@@ -602,7 +632,7 @@ export function buildTwilightContext(achievements: any[], presenceMessage: strin
   });
   comingUp = uniqueAchievements([...comingUp, ...routeComingUp]).slice(0, 1);
 
-  const relevantAll = uniqueAchievements([...rpRelevant, ...missables, ...current, ...comingUp]);
+  const relevantAll = uniqueAchievements([...rpRelevant, ...missables, ...current, ...comingUp, ...areaOpportunities]);
   const source: ContextSource = context.label && (route.missables.length || route.nextProgression.length)
     ? 'hybrid'
     : context.label
@@ -617,7 +647,9 @@ export function buildTwilightContext(achievements: any[], presenceMessage: strin
     missables,
     current,
     comingUp,
+    areaOpportunities,
+    storyChapter,
     source,
-    routeLabel: route.routeLabel,
+    routeLabel: storyChapter ? `Guide ${storyChapter.code} · ${storyChapter.title}` : route.routeLabel,
   };
 }
