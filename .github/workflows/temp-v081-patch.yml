@@ -28,6 +28,7 @@ jobs:
           grep -Fq 'achievements={nextStoryAchievements}' app/src/main.tsx
           node --check app/electron/services/runtime-helper-service.cjs
           node scripts/test-runtime-helper-epipe.cjs
+          git config core.whitespace cr-at-eol
           git diff --check
       - name: Commit product patch
         shell: bash
