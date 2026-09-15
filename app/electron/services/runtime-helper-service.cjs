@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 
 function createRuntimeHelperService({ app }) {
   let child = null;
+  let stoppingChild = null;
   let stdoutBuffer = '';
   let stderrBuffer = '';
   let nextRequestId = 1;
@@ -37,6 +38,35 @@ function createRuntimeHelperService({ app }) {
   function rejectPending(error) {
     for (const entry of pending.values()) entry.reject(error);
     pending.clear();
+  }
+
+  function isPipeClosureError(error) {
+    const code = String(error?.code || '');
+    return code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED' || code === 'ERR_STREAM_WRITE_AFTER_END';
+  }
+
+  function handlePipeFailure(spawned, error) {
+    const expectedStop = stoppingChild === spawned;
+    if (child !== spawned && !expectedStop) return;
+
+    if (child === spawned) child = null;
+    if (expectedStop) stoppingChild = null;
+    const normalizedError = error instanceof Error ? error : new Error(String(error || 'Runtime helper pipe closed.'));
+    state = {
+      ...state,
+      running: false,
+      ready: false,
+      dolphinAttached: false,
+      dolphinPid: null,
+      pid: null,
+      lastError: expectedStop
+        ? state.lastError
+        : isPipeClosureError(normalizedError)
+          ? 'Runtime helper connection closed. It will reconnect automatically.'
+          : normalizedError.message,
+    };
+    rejectPending(normalizedError);
+    try { if (!spawned.killed) spawned.kill(); } catch { /* best effort */ }
   }
 
   function handleMessage(message) {
@@ -143,6 +173,7 @@ function createRuntimeHelperService({ app }) {
         const message = stderrBuffer.trim();
         if (message) state = { ...state, lastError: message.split(/\r?\n/).slice(-1)[0] };
       });
+      spawned.stdin.on('error', (error) => handlePipeFailure(spawned, error));
 
       spawned.on('error', (error) => {
         if (child !== spawned) return;
@@ -159,9 +190,10 @@ function createRuntimeHelperService({ app }) {
       });
 
       spawned.on('exit', (code, signal) => {
-        if (child !== spawned) return;
-        child = null;
-        const expected = code === 0 || signal === 'SIGTERM';
+        if (child !== spawned && stoppingChild !== spawned) return;
+        if (child === spawned) child = null;
+        const expected = code === 0 || signal === 'SIGTERM' || stoppingChild === spawned;
+        if (stoppingChild === spawned) stoppingChild = null;
         state = {
           ...state,
           running: false,
@@ -197,7 +229,8 @@ function createRuntimeHelperService({ app }) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) payload = {};
 
     start();
-    if (!child || child.killed || !child.stdin?.writable) {
+    const target = child;
+    if (!target || target.killed || !target.stdin?.writable) {
       return Promise.reject(new Error(state.lastError || 'Runtime helper is not running.'));
     }
 
@@ -213,13 +246,23 @@ function createRuntimeHelperService({ app }) {
         reject: (error) => { clearTimeout(timer); reject(error); },
       });
 
-      child.stdin.write(`${JSON.stringify({ id, command, ...payload })}\n`, (error) => {
-        if (!error) return;
+      const failWrite = (error) => {
+        const normalizedError = error instanceof Error ? error : new Error(String(error || 'Runtime helper write failed.'));
         const entry = pending.get(id);
-        if (!entry) return;
-        pending.delete(id);
-        entry.reject(error);
-      });
+        if (entry) {
+          pending.delete(id);
+          entry.reject(normalizedError);
+        }
+        if (isPipeClosureError(normalizedError)) handlePipeFailure(target, normalizedError);
+      };
+
+      try {
+        target.stdin.write(`${JSON.stringify({ id, command, ...payload })}\n`, (error) => {
+          if (error) failWrite(error);
+        });
+      } catch (error) {
+        failWrite(error);
+      }
     });
   }
 
@@ -248,13 +291,20 @@ function createRuntimeHelperService({ app }) {
   function stop() {
     if (!child || child.killed) return;
     const target = child;
+    stoppingChild = target;
     try {
       if (target.stdin?.writable) {
         const id = nextRequestId++;
-        target.stdin.write(`${JSON.stringify({ id, command: 'shutdown' })}\n`);
+        target.stdin.write(`${JSON.stringify({ id, command: 'shutdown' })}\n`, (error) => {
+          if (error) handlePipeFailure(target, error);
+        });
+      } else {
+        const error = new Error('Runtime helper input stream is already closed.');
+        error.code = 'ERR_STREAM_DESTROYED';
+        handlePipeFailure(target, error);
       }
-    } catch {
-      // Best effort during application shutdown.
+    } catch (error) {
+      handlePipeFailure(target, error);
     }
     setTimeout(() => {
       if (child === target && !target.killed) {

@@ -387,6 +387,13 @@ function Overlay() {
     ...(pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : []),
   ].map(achievementId)).size;
   const contextPct = contextTotal ? Math.round((contextUnlocked / contextTotal) * 100) : 0;
+  const currentStoryIds = new Set(companion.current.map(achievementId));
+  const nextStoryAchievements = uniqueAchievements([
+    ...(pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : []),
+    ...companion.comingUp,
+  ])
+    .filter((achievement: any) => !currentStoryIds.has(achievementId(achievement)))
+    .slice(0, 1);
 
   useEffect(() => {
     document.body.classList.add('overlay-body');
@@ -520,10 +527,10 @@ function Overlay() {
                 <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="danger" title={ramLive ? '⚠ Missable now' : '⚠ Missable now / soon'} achievements={companion.missables} ram={effectiveRam} states={achievementStates} />
                 <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="current" title={companion.context.boss ? `🎯 Boss Now · ${companion.context.boss}` : '🎯 Current Story Beat'} achievements={companion.current} ram={effectiveRam} states={achievementStates} />
                 <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="opportunity" title="◇ Area Opportunity" achievements={companion.areaOpportunities || []} ram={effectiveRam} states={achievementStates} />
-                <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="coming" title="◉ Next Story Beat" achievements={pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : companion.comingUp} ram={effectiveRam} states={achievementStates} />
+                <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="coming" title="◉ Next Story Beat" achievements={nextStoryAchievements} ram={effectiveRam} states={achievementStates} />
                 <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="coming" title="◉ Story / RA context" achievements={fallbackAchievements} ram={effectiveRam} states={achievementStates} />
                 <OverlaySection runtimeLive={runtimeLive} profile={activeProfile} kind="current" title="◈ Live RAM Opportunity" achievements={deepLiveAchievements} ram={effectiveRam} states={achievementStates} />
-                {!companion.missables.length && !companion.current.length && !companion.comingUp.length && !pendingFaronVesselAchievement && !fallbackAchievements.length && !deepLiveAchievements.length && (
+                {!companion.missables.length && !companion.current.length && !nextStoryAchievements.length && !fallbackAchievements.length && !deepLiveAchievements.length && (
                   <div className="context-clear"><b>All relevant Hardcore achievements cleared</b><span>Nothing open for this context.</span></div>
                 )}
               </div>
@@ -828,8 +835,8 @@ function App() {
     ? (/^https?:\/\//i.test(gameImageRaw) ? gameImageRaw : `https://media.retroachievements.org${gameImageRaw.startsWith('/') ? '' : '/'}${gameImageRaw}`)
     : '';
 
-  async function saveSettings(e: React.FormEvent) {
-    e.preventDefault();
+  async function saveSettings(e?: React.FormEvent) {
+    e?.preventDefault();
     const requestedUsername = username.trim();
     setSaved('');
     setAccountError('');
@@ -861,12 +868,14 @@ function App() {
       setAccountPhase('connected');
       setSaved('Connected');
       window.setTimeout(() => setSaved(''), 1600);
+      return true;
     } catch (err: any) {
       setAccountPhase('error');
       setAccountError(err?.message || 'Could not connect this RetroAchievements account.');
       // Intentionally do not restore any previous snapshot/account identity.
       // A failed account switch must never fall back to the prior user's progress.
       clearSnapshot();
+      return false;
     }
   }
 
