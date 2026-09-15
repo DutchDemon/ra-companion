@@ -1,6 +1,6 @@
 {
   "name": "ra-companion",
-  "version": "0.7.1",
+  "version": "0.8.1",
   "private": true,
   "description": "RetroAchievements companion with live read-only Dolphin shared-memory context",
   "main": "electron/main.cjs",
@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "react": "^19.1.1",
-    "react-dom": "^19.1.1",
+    "react-dom": "^19.1.7",
     "electron-updater": "^6.6.2"
   },
   "devDependencies": {
