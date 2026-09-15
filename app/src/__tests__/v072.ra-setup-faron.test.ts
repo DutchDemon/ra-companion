@@ -45,10 +45,12 @@ describe('v0.7.2 unified RA setup and Faron context', () => {
     const pages = fs.readFileSync(path.join(root, 'src/AppPages.tsx'), 'utf8');
     const types = fs.readFileSync(path.join(root, 'src/global.d.ts'), 'utf8');
 
-    expect(pages).toContain('RETROACHIEVEMENTS CONNECTION');
-    expect(pages).toContain('One more step for live Rich Presence');
-    expect(pages).toContain('Live runtime & Rich Presence');
-    expect(pages).toContain('Runtime & Rich Presence diagnostics');
+    expect(pages).toContain('RETROACHIEVEMENTS');
+    expect(pages).toContain('Username');
+    expect(pages).toContain('Password');
+    expect(pages).toContain('API Key');
+    expect(pages).toContain('Save & connect');
+    expect(pages).toContain('Diagnostics');
     expect(pages).toContain('Helper installed');
     expect(pages).toContain('rcheevos ready');
     expect(pages).toContain('Official patch loaded');

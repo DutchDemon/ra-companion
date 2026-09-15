@@ -491,11 +491,9 @@ export function SettingsPage() {
     apiKey,
     setApiKey,
     hasApiKey,
-    apiKeyEncrypted,
     saved,
     accountPhase,
     connectedUser,
-    progressOwner,
     lastVerifiedAt,
     accountError,
     forceRefreshAccount,
@@ -515,8 +513,8 @@ export function SettingsPage() {
   const runtimeConnected = Boolean(runtimeAuth?.connected);
   const setupReady = webConnected && runtimeConnected;
   const setupHasError = Boolean(accountError || runtimeError || runtimeHelper?.lastError || runtimeObserver?.error);
-  const setupLabel = setupReady ? 'READY' : setupHasError ? 'ATTENTION' : webConnected ? 'SETUP INCOMPLETE' : 'SETUP REQUIRED';
-  const setupTone = setupReady ? 'complete' : setupHasError ? 'danger' : webConnected ? 'warning' : 'neutral';
+  const setupLabel = setupReady ? 'READY' : setupHasError ? 'ATTENTION' : 'CONNECT';
+  const setupTone = setupReady ? 'complete' : setupHasError ? 'danger' : 'neutral';
   const richPresenceActive = Boolean(
     snapshot?.runtime?.live?.active &&
     snapshot?.runtime?.live?.richPresenceLoaded &&
@@ -525,7 +523,9 @@ export function SettingsPage() {
   );
   const gameActive = Boolean(snapshot?.game?.active);
   const patchLoaded = runtimeObserver?.phase === 'ready' && Number(runtimeObserver.loadedAchievementCount || 0) > 0;
+  const observerReady = Boolean(runtimeConnected && runtimeHelper?.ready);
   const diagnosticError = runtimeError || runtimeObserver?.error || snapshot?.runtime?.live?.lastError || runtimeHelper?.lastError || '';
+  const diagnosticHealthy = Boolean(setupReady && runtimeHelper?.available && runtimeHelper?.running && runtimeHelper?.ready && !diagnosticError);
 
   async function refreshRuntimeDiagnostics() {
     try {
@@ -537,8 +537,10 @@ export function SettingsPage() {
       setRuntimeAuth(auth);
       setRuntimeHelper(helper);
       setRuntimeObserver(observer);
+      return auth;
     } catch (runtimeStatusError: any) {
       setRuntimeError(runtimeStatusError?.message || String(runtimeStatusError));
+      return null;
     }
   }
 
@@ -567,36 +569,67 @@ export function SettingsPage() {
     };
   }, [connectedUser, lastVerifiedAt]);
 
-  async function connectRuntimeData(event: React.FormEvent) {
-    event.preventDefault();
-    if (runtimeBusy || !webConnected) return;
+  async function loginRuntimeWithPassword() {
+    const password = runtimePassword;
+    if (!password) {
+      setRuntimeError('Enter your RetroAchievements password once to create a new runtime token.');
+      return false;
+    }
     setRuntimeBusy(true);
     setRuntimeError('');
     setRuntimeMessage('');
     try {
-      const status = await window.raCompanion.loginRuntimeAccount(runtimePassword);
+      const status = await window.raCompanion.loginRuntimeAccount(password);
       setRuntimeAuth(status);
       setRuntimeMessage(status.persistent
-        ? 'Live runtime enabled. The token is protected with OS-backed encryption.'
-        : 'Live runtime enabled for this app session; OS encryption is unavailable.');
+        ? 'Connected. Your encrypted runtime token will be reused automatically.'
+        : 'Connected for this app session; OS encryption is unavailable.');
       await refreshRuntimeDiagnostics();
+      return true;
     } catch (runtimeLoginError: any) {
       setRuntimeError(runtimeLoginError?.message || String(runtimeLoginError));
+      return false;
     } finally {
       setRuntimePassword('');
       setRuntimeBusy(false);
     }
   }
 
-  async function validateRuntimeData() {
+  async function saveAndConnect(event: React.FormEvent) {
+    event.preventDefault();
     if (runtimeBusy) return;
-    setRuntimeBusy(true);
     setRuntimeError('');
     setRuntimeMessage('');
+    const accountConnected = await saveSettings();
+    if (!accountConnected) return;
+
+    const auth = await refreshRuntimeDiagnostics();
+    if (runtimePassword) {
+      await loginRuntimeWithPassword();
+    } else if (!auth?.connected) {
+      setRuntimeError('Enter your RetroAchievements password once to finish connecting. It is never stored.');
+    } else {
+      setRuntimeMessage('Connected. Saved credentials will be reused automatically.');
+    }
+  }
+
+  async function reconnectRuntimeData() {
+    if (runtimeBusy) return;
+    setRuntimeError('');
+    setRuntimeMessage('');
+    if (runtimePassword) {
+      await loginRuntimeWithPassword();
+      return;
+    }
+    if (!runtimeConnected) {
+      setRuntimeError('Enter your RetroAchievements password to reconnect.');
+      return;
+    }
+    setRuntimeBusy(true);
     try {
       const status = await window.raCompanion.validateRuntimeAccount();
       setRuntimeAuth(status);
-      setRuntimeMessage('Runtime token validated with RetroAchievements.');
+      setRuntimeMessage('Connection validated. No new login is needed.');
       await refreshRuntimeDiagnostics();
     } catch (runtimeValidationError: any) {
       setRuntimeAuth(await window.raCompanion.getRuntimeAuthStatus());
@@ -613,7 +646,7 @@ export function SettingsPage() {
     setRuntimeMessage('');
     try {
       setRuntimeAuth(await window.raCompanion.disconnectRuntimeAccount());
-      setRuntimeMessage('Live runtime connection removed. Web API progress remains connected.');
+      setRuntimeMessage('Saved runtime token removed.');
       await refreshRuntimeDiagnostics();
     } catch (runtimeDisconnectError: any) {
       setRuntimeError(runtimeDisconnectError?.message || String(runtimeDisconnectError));
@@ -622,102 +655,91 @@ export function SettingsPage() {
     }
   }
 
+  async function disconnectEverything() {
+    await disconnectAccount();
+    setRuntimeAuth(await window.raCompanion.getRuntimeAuthStatus());
+    await refreshRuntimeDiagnostics();
+  }
+
   function diagnosticValue(ok: boolean | undefined, readyText: string, waitingText: string) {
     if (ok === undefined) return 'Checking…';
     return ok ? readyText : waitingText;
   }
 
+  const busy = runtimeBusy || ['saving', 'verifying', 'refreshing'].includes(accountPhase);
+
   return (
     <>
-      <header className="v5-page-header"><div><span className="v5-page-icon">⚙</span><div><h1>Settings</h1><p>RetroAchievements account, live runtime and companion preferences.</p></div></div></header>
+      <header className="v5-page-header"><div><span className="v5-page-icon">⚙</span><div><h1>Settings</h1><p>RetroAchievements and companion preferences.</p></div></div></header>
 
-      <article className="v5-panel v5-settings-form v72-ra-setup-card">
-        <div className="v5-card-heading v72-setup-heading">
+      <article className="v5-panel v5-settings-form v81-ra-card">
+        <div className="v5-card-heading v81-ra-heading">
           <div>
-            <div className="v5-section-label">RETROACHIEVEMENTS CONNECTION</div>
-            <h3>Account & live runtime</h3>
-            <small className="v5-muted">One setup flow for official progress, local rcheevos observer data and RA Rich Presence.</small>
+            <div className="v5-section-label">RETROACHIEVEMENTS</div>
+            <p className="v5-muted">Connect your RetroAchievements account for achievements, Rich Presence and live observer.</p>
           </div>
           <span className={`v5-status-pill ${setupTone}`}>{setupLabel}</span>
         </div>
 
-        <div className="v72-setup-overview" aria-label="RetroAchievements setup status">
-          <div className={webConnected ? 'complete' : 'required'}><span>1</span><div><b>RA account</b><small>Official progress & completion authority</small></div><strong>{webConnected ? 'Connected' : 'Required'}</strong></div>
-          <div className={runtimeConnected ? 'complete' : webConnected ? 'required' : 'locked'}><span>2</span><div><b>Live runtime</b><small>Official definitions & measured state</small></div><strong>{runtimeConnected ? 'Connected' : webConnected ? 'Required' : 'Locked'}</strong></div>
-          <div className={runtimeConnected ? 'complete' : 'locked'}><span>✓</span><div><b>RA Rich Presence</b><small>Evaluated locally through rcheevos</small></div><strong>{richPresenceActive ? 'Active now' : runtimeConnected ? 'Enabled' : 'Unavailable'}</strong></div>
+        <form className="v81-ra-form" onSubmit={saveAndConnect}>
+          <label htmlFor="ra-username">Username
+            <input id="ra-username" name="username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Your RA username" />
+          </label>
+
+          <label htmlFor="ra-runtime-password">Password
+            <span className="v81-input-state">
+              <input id="ra-runtime-password" name="runtimePassword" autoComplete="current-password" type="password" value={runtimePassword} onChange={(event) => setRuntimePassword(event.target.value)} placeholder={runtimeConnected ? 'Authenticated · enter only to reconnect' : 'Enter your RA password'} disabled={runtimeBusy} />
+              {runtimeConnected && !runtimePassword && <i aria-hidden="true">✓</i>}
+            </span>
+          </label>
+
+          <label htmlFor="ra-api-key">API Key
+            <span className="v81-input-state">
+              <input id="ra-api-key" name="apiKey" autoComplete="off" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={hasApiKey ? 'Stored · enter only to replace' : 'Paste Web API key'} />
+              {hasApiKey && !apiKey && <i aria-hidden="true">✓</i>}
+            </span>
+          </label>
+
+          <div className="v81-form-actions">
+            <button type="submit" disabled={busy}>{busy ? 'Working…' : 'Save & connect'}</button>
+            <button type="button" className="secondary" disabled={busy} onClick={reconnectRuntimeData}>Reconnect</button>
+          </div>
+        </form>
+
+        <div className="v81-status-line" aria-label="RetroAchievements connection status">
+          <span className={webConnected ? 'complete' : 'waiting'}>{webConnected ? '✓' : '•'} Connected</span>
+          <em>·</em>
+          <span className={runtimeConnected ? 'complete' : 'waiting'}>{runtimeConnected ? '✓' : '•'} Rich Presence</span>
+          <em>·</em>
+          <span className={observerReady ? 'complete' : 'waiting'}>{observerReady ? '✓' : '•'} Live observer</span>
         </div>
 
-        {webConnected && !runtimeConnected && (
-          <div className="v72-prereq-callout warning">
-            <b>One more step for live Rich Presence</b>
-            <span>Enter your RetroAchievements password once below. RA Companion exchanges it for a runtime token and never stores the password.</span>
-          </div>
-        )}
-        {setupReady && (
-          <div className="v72-prereq-callout complete">
-            <b>RetroAchievements setup complete</b>
-            <span>Official progress stays server-authoritative while Rich Presence and live achievement definitions run through the local read-only observer.</span>
-          </div>
-        )}
-
-        <form className="v72-setup-step" onSubmit={saveSettings}>
-          <div className="v72-step-heading"><span>STEP 1</span><div><b>RA account</b><small>Required for official achievement progress and account ownership.</small></div><em className={webConnected ? 'complete' : ''}>{webConnected ? 'Connected' : 'Required'}</em></div>
-          <label htmlFor="ra-username">Username<input id="ra-username" name="username" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Your RA username" /></label>
-          <label htmlFor="ra-api-key">Web API key<input id="ra-api-key" name="apiKey" autoComplete="off" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={hasApiKey ? 'Key already stored · enter only to replace' : 'Paste Web API key'} /></label>
-          <div className="v72-step-actions">
-            <button type="submit" disabled={['saving', 'verifying', 'refreshing'].includes(accountPhase)}>{accountPhase === 'saving' ? 'Saving…' : accountPhase === 'verifying' ? 'Verifying…' : accountPhase === 'refreshing' ? 'Refreshing…' : webConnected ? 'Save account changes' : 'Save & connect'}</button>
-            <button type="button" className="secondary" disabled={!hasApiKey || ['saving', 'verifying', 'refreshing'].includes(accountPhase)} onClick={forceRefreshAccount}>Force refresh from RA</button>
-          </div>
-          <div className="v6-account-facts v72-account-facts">
-            <div><span>Connection</span><b>{connectedUser ? `Connected as ${connectedUser}` : 'Not connected'}</b></div>
-            <div><span>Progress owner</span><b>{progressOwner || '—'}</b></div>
-            <div><span>Last verified</span><b>{lastVerifiedAt ? new Date(lastVerifiedAt).toLocaleString() : '—'}</b></div>
-            <div><span>API key</span><b>{hasApiKey ? (apiKeyEncrypted ? 'Stored · encrypted' : 'Stored') : 'Missing'}</b></div>
-          </div>
-          <div className="v72-manage-row"><small className="v5-muted">Leaving the API key blank keeps the currently stored key.</small><button type="button" className="secondary danger-button" disabled={!hasApiKey && !username} onClick={disconnectAccount}>Disconnect RA account</button></div>
-        </form>
-
-        <form className={`v72-setup-step ${!webConnected ? 'locked' : ''}`} onSubmit={connectRuntimeData}>
-          <div className="v72-step-heading"><span>STEP 2</span><div><b>Live runtime & Rich Presence</b><small>Required for official local RA Rich Presence, rcheevos definitions and measured achievement state.</small></div><em className={runtimeConnected ? 'complete' : webConnected ? 'required' : ''}>{runtimeConnected ? 'Connected' : webConnected ? 'Required' : 'Locked'}</em></div>
-          {!webConnected ? (
-            <div className="v72-prereq-callout locked"><b>Complete Step 1 first</b><span>Connect and verify the RA account above before enabling the local runtime.</span></div>
-          ) : (
-            <>
-              <label htmlFor="ra-runtime-password">RA password<input id="ra-runtime-password" name="runtimePassword" autoComplete="current-password" type="password" value={runtimePassword} onChange={(e) => setRuntimePassword(e.target.value)} placeholder={runtimeConnected ? 'Token already stored · enter password only to reconnect' : 'Used once to request a runtime token'} disabled={runtimeBusy} /></label>
-              <div className="v72-step-actions">
-                <button type="submit" disabled={!runtimePassword || runtimeBusy}>{runtimeBusy ? 'Working…' : runtimeConnected ? 'Reconnect live runtime' : 'Finish setup'}</button>
-                <button type="button" className="secondary" disabled={!runtimeConnected || runtimeBusy} onClick={validateRuntimeData}>Validate token</button>
-              </div>
-              <div className="v6-account-facts v72-account-facts">
-                <div><span>Runtime account</span><b>{runtimeConnected ? runtimeAuth?.username : 'Not connected'}</b></div>
-                <div><span>Token storage</span><b>{runtimeConnected ? (runtimeAuth?.persistent ? 'OS-encrypted' : 'Memory only') : '—'}</b></div>
-                <div><span>Last validated</span><b>{runtimeAuth?.lastValidatedAt ? new Date(runtimeAuth.lastValidatedAt).toLocaleString() : '—'}</b></div>
-                <div><span>Authority</span><b>RA server</b></div>
-              </div>
-              <div className="v72-manage-row"><small className="v5-muted">The password is used only for the one-time <code>login2</code> token exchange and is never stored.</small><button type="button" className="secondary danger-button" disabled={!runtimeConnected || runtimeBusy} onClick={disconnectRuntimeData}>Remove runtime token</button></div>
-            </>
-          )}
-        </form>
-
-        <details className="v72-runtime-diagnostics" open={Boolean(runtimeConnected && diagnosticError)}>
-          <summary><span>Runtime & Rich Presence diagnostics</span><small>{diagnosticError ? 'Attention needed' : runtimeConnected ? 'Connection health' : 'Available after setup'}</small></summary>
+        <details className="v72-runtime-diagnostics v81-diagnostics" open={Boolean(diagnosticError)}>
+          <summary><span>Diagnostics</span><small className={diagnosticHealthy ? 'good' : diagnosticError ? 'warning-text' : ''}>{diagnosticHealthy ? '● Healthy' : diagnosticError ? '● Attention' : '● Checking'}</small></summary>
           <div className="v72-diagnostic-grid">
-            <div><span>Runtime authenticated</span><b className={runtimeConnected ? 'good' : 'warning-text'}>{runtimeConnected ? 'Yes' : 'No'}</b></div>
+            <div><span>Account</span><b className={webConnected ? 'good' : 'warning-text'}>{webConnected ? connectedUser : 'Not connected'}</b></div>
+            <div><span>Runtime token</span><b className={runtimeConnected ? 'good' : 'warning-text'}>{runtimeConnected ? (runtimeAuth?.persistent ? 'Stored · OS-encrypted' : 'Memory only') : 'Missing'}</b></div>
             <div><span>Helper installed</span><b className={runtimeHelper?.available ? 'good' : 'warning-text'}>{diagnosticValue(runtimeHelper?.available, 'Yes', 'No')}</b></div>
             <div><span>Helper running</span><b className={runtimeHelper?.running ? 'good' : 'warning-text'}>{diagnosticValue(runtimeHelper?.running, 'Yes', 'No')}</b></div>
             <div><span>rcheevos ready</span><b className={runtimeHelper?.ready ? 'good' : 'warning-text'}>{diagnosticValue(runtimeHelper?.ready, runtimeHelper?.rcheevosVersion ? `Yes · ${runtimeHelper.rcheevosVersion}` : 'Yes', 'No')}</b></div>
             <div><span>Dolphin attached</span><b className={runtimeHelper?.dolphinAttached ? 'good' : ''}>{runtimeHelper?.dolphinAttached ? `Yes${runtimeHelper.dolphinPid ? ` · PID ${runtimeHelper.dolphinPid}` : ''}` : gameActive ? 'No' : 'Waiting for game'}</b></div>
             <div><span>Official patch loaded</span><b className={patchLoaded ? 'good' : ''}>{patchLoaded ? `${runtimeObserver?.loadedAchievementCount || 0} achievements` : gameActive && runtimeConnected ? (runtimeObserver?.phase || 'Waiting') : 'Waiting for game'}</b></div>
-            <div><span>Rich Presence</span><b className={richPresenceActive ? 'good' : ''}>{richPresenceActive ? 'Active' : runtimeConnected ? (gameActive ? 'Waiting / unavailable' : 'Waiting for game') : 'Needs Step 2'}</b></div>
+            <div><span>Rich Presence</span><b className={richPresenceActive ? 'good' : ''}>{richPresenceActive ? 'Active' : runtimeConnected ? (gameActive ? 'Waiting / unavailable' : 'Ready · waiting for game') : 'Not connected'}</b></div>
             <div><span>Memory bridge</span><b className={runtimeHelper?.gameCubeMemoryBridge ? 'good' : ''}>{diagnosticValue(runtimeHelper?.gameCubeMemoryBridge, 'Read-only ready', 'Unavailable')}</b></div>
           </div>
+          <p className="v81-auth-note">Your password is used only when a new runtime token is needed and is never stored. The saved API key and encrypted runtime token are reused automatically.</p>
           {diagnosticError && <div className="error-card v6-inline-error v72-diagnostic-error"><b>Runtime error</b><span>{diagnosticError}</span></div>}
-          <button type="button" className="secondary compact-button" onClick={refreshRuntimeDiagnostics}>Refresh diagnostics</button>
+          <div className="v81-advanced-actions">
+            <button type="button" className="secondary compact-button" onClick={refreshRuntimeDiagnostics}>Refresh diagnostics</button>
+            <button type="button" className="secondary compact-button" disabled={!hasApiKey || busy} onClick={forceRefreshAccount}>Refresh RA data</button>
+            <button type="button" className="secondary danger-button compact-button" disabled={!runtimeConnected || runtimeBusy} onClick={disconnectRuntimeData}>Remove runtime token</button>
+            <button type="button" className="secondary danger-button compact-button" disabled={!hasApiKey && !username} onClick={disconnectEverything}>Disconnect account</button>
+          </div>
         </details>
 
         {saved && <div className="saved v72-inline-message">{saved}</div>}
-        {accountError && <div className="error-card v6-inline-error">{accountError}</div>}
         {runtimeMessage && <div className="saved v72-inline-message">{runtimeMessage}</div>}
+        {accountError && <div className="error-card v6-inline-error">{accountError}</div>}
         {runtimeError && <div className="error-card v6-inline-error">{runtimeError}</div>}
       </article>
 

@@ -23,9 +23,10 @@ describe('v0.7 secure runtime auth and official game-data layer', () => {
     expect(service).not.toContain('passwordEncrypted');
     expect(service).not.toContain('raw.password');
     expect(service).not.toContain('apiKey: credential.token');
-    expect(settings).toContain('never stores the password');
-    expect(settings).toContain('Web API key');
-    expect(settings).toContain('Live runtime & Rich Presence');
+    expect(settings).toContain('never stored');
+    expect(settings).toContain('API Key');
+    expect(settings).toContain('Password');
+    expect(settings).toContain('Save & connect');
   });
 
   it('has no gameplay-session or submission request surface', () => {

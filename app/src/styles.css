@@ -1167,3 +1167,28 @@ body {
   .v72-diagnostic-grid { grid-template-columns: 1fr; }
   .v72-manage-row { align-items: flex-start; flex-direction: column; }
 }
+
+
+/* v0.8.1 — compact unified RetroAchievements connection */
+.v81-ra-card{max-width:920px;border-color:rgba(55,222,166,.34);box-shadow:0 18px 44px rgba(0,0,0,.2)}
+.v81-ra-heading{align-items:flex-start;margin-bottom:18px}
+.v81-ra-heading .v5-section-label{color:#ff9b29;font-size:12px;letter-spacing:.16em}
+.v81-ra-heading p{margin:5px 0 0;max-width:620px}
+.v81-ra-form{display:grid;gap:14px}
+.v81-ra-form>label{display:grid;gap:7px;font-size:12px;font-weight:800;color:#aebdca}
+.v81-ra-form input{width:100%;min-height:44px}
+.v81-input-state{position:relative;display:block}
+.v81-input-state input{padding-right:46px}
+.v81-input-state>i{position:absolute;right:14px;top:50%;transform:translateY(-50%);display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:#45e6ad;color:#071611;font-style:normal;font-weight:1000;box-shadow:0 0 16px rgba(69,230,173,.2)}
+.v81-form-actions{display:flex;gap:10px;align-items:center;margin-top:4px}
+.v81-form-actions button:first-child{min-width:205px}
+.v81-status-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:18px;padding-top:15px;border-top:1px solid rgba(255,255,255,.08);font-size:13px;font-weight:900}
+.v81-status-line span{color:#82919f}
+.v81-status-line span.complete{color:#45e6ad}
+.v81-status-line em{color:#61707d;font-style:normal}
+.v81-diagnostics{margin-top:14px}
+.v81-diagnostics summary{min-height:46px}
+.v81-diagnostics summary small.good{color:#45e6ad}
+.v81-auth-note{margin:12px 0 0;color:#8c99a5;font-size:11px;line-height:1.55}
+.v81-advanced-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+@media (max-width:760px){.v81-form-actions{align-items:stretch;flex-direction:column}.v81-form-actions button{width:100%}.v81-status-line{gap:7px}.v81-ra-card{max-width:none}}
