@@ -26,6 +26,7 @@ jobs:
           set -euo pipefail
           git config user.name "DutchDemon"
           git config user.email "sander.kaas@gmail.com"
+          git config core.whitespace cr-at-eol
           git add app/src/AppPages.tsx app/src/global.d.ts app/src/styles.css app/src/profiles/faronNextStep.ts app/src/__tests__/v072.ra-setup-faron.test.ts .github/workflows/v072-ra-setup-faron.yml
           git diff --cached --check
           git commit -m "feat: unify RA setup and harden Faron context"
