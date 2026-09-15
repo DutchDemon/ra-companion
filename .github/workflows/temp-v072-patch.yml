@@ -1,0 +1,32 @@
+name: TEMP v0.7.2 patch
+
+on:
+  push:
+    branches:
+      - feature/v0.7.2-ra-setup-faron-diagnostics
+    paths:
+      - scripts/patch-v072.py
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/v0.7.2-ra-setup-faron-diagnostics
+          fetch-depth: 0
+      - name: Apply v0.7.2 patch
+        run: python3 scripts/patch-v072.py
+      - name: Commit intended files only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "DutchDemon"
+          git config user.email "sander.kaas@gmail.com"
+          git add app/src/AppPages.tsx app/src/global.d.ts app/src/styles.css app/src/profiles/faronNextStep.ts app/src/__tests__/v072.ra-setup-faron.test.ts .github/workflows/v072-ra-setup-faron.yml
+          git diff --cached --check
+          git commit -m "feat: unify RA setup and harden Faron context"
+          git push origin HEAD:feature/v0.7.2-ra-setup-faron-diagnostics
