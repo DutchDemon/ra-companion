@@ -64,7 +64,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ROOT='payload'
+          ROOT='payload/release'
           INSTALLER="$ROOT/RA Companion Setup 0.7.2.exe"
           BLOCKMAP="$ROOT/RA Companion Setup 0.7.2.exe.blockmap"
           LATEST="$ROOT/latest.yml"
@@ -73,7 +73,7 @@ jobs:
           test -f "$LATEST"
           test -f "$ROOT/checksums.txt"
           test -f "$ROOT/defender-scan.txt"
-          test -f "$ROOT/release-helper-self-test.txt"
+          test -f 'payload/release-helper-self-test.txt'
           test -f 'antivirus/clamav-scan.txt'
 
           grep -q '^version: 0.7.2$' "$LATEST"
@@ -118,7 +118,7 @@ jobs:
           The Windows release passed the focused v0.7.2 regression, full app regression suite, TypeScript, production build, pinned rcheevos v12.5.0 helper checks, native observer validation, packaged-app validation, Microsoft Defender and ClamAV.
           NOTES
 
-          ROOT='payload'
+          ROOT='payload/release'
           gh release create "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$SOURCE_HEAD_SHA" \
@@ -131,6 +131,6 @@ jobs:
             "$ROOT/checksums.txt" \
             "$ROOT/defender-scan.txt" \
             'antivirus/clamav-scan.txt' \
-            "$ROOT/release-helper-self-test.txt"
+            'payload/release-helper-self-test.txt'
 
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,url,assets
