@@ -21,6 +21,21 @@ function achievementType(achievement: any) {
   return String(achievement?.Type ?? achievement?.type ?? '').trim().toLowerCase();
 }
 
+function normalize(value: unknown) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[’‘]/g, "'")
+    .toLowerCase()
+    .replace(/[^a-z0-9' ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function achievementText(achievement: any) {
+  return normalize(`${achievement?.Title ?? achievement?.title ?? ''} ${achievement?.Description ?? achievement?.description ?? ''}`);
+}
+
 function isMissable(achievement: any) {
   return achievementType(achievement) === 'missable' || Boolean(getTwilightMissableGuide(achievement));
 }
@@ -38,6 +53,16 @@ function unique(items: any[]) {
 function storyWindowAllows(achievement: any, ram?: TwilightStoryRamContext) {
   const decision = missableStoryWindowDecision(achievement, ram);
   return decision !== false;
+}
+
+function exactAreaOpportunities(achievements: any[], base: any, ram?: TwilightStoryRamContext & Record<string, any>) {
+  const location = normalize(ram?.stageName || base?.context?.label || '');
+  if (!location || location.length < 4) return [];
+  return achievements
+    .filter((achievement) => !earnedHardcore(achievement))
+    .filter((achievement) => !isMissable(achievement))
+    .filter((achievement) => isAreaOpportunityAchievement(achievement))
+    .filter((achievement) => achievementText(achievement).includes(location));
 }
 
 /**
@@ -76,7 +101,12 @@ export function buildTwilightStoryAwareContext(
     .filter((achievement: any) => !isMissable(achievement))
     .filter((achievement: any) => isStoryProgressionAchievement(achievement));
 
-  const contextualOptional = base.current
+  // Strict RAM mode intentionally suppresses broad location matches in the legacy
+  // selector. Re-introduce only exact current-area matches as optional opportunities.
+  const contextualOptional = unique([
+    ...base.current,
+    ...exactAreaOpportunities(achievements, base, ram),
+  ])
     .filter((achievement: any) => !earnedHardcore(achievement))
     .filter((achievement: any) => !isMissable(achievement))
     .filter((achievement: any) => isAreaOpportunityAchievement(achievement));
