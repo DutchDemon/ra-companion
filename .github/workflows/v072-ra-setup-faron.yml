@@ -1,0 +1,57 @@
+name: v0.7.2 RA Setup + Faron Validation
+
+on:
+  push:
+    branches:
+      - feature/v0.7.2-ra-setup-faron-diagnostics
+    paths:
+      - 'app/**'
+      - 'scripts/test-*.cjs'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'scripts/test-*.cjs'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+      - name: v0.7.2 focused regression
+        working-directory: app
+        run: npx vitest run src/__tests__/v072.ra-setup-faron.test.ts --environment jsdom
+      - name: TypeScript
+        working-directory: app
+        run: npm run typecheck
+      - name: Full renderer regressions
+        working-directory: app
+        run: npm run test:regressions
+      - name: Runtime data service regression
+        run: node scripts/test-ra-runtime-data-service.cjs
+      - name: Observer runtime regression
+        run: node scripts/test-observer-runtime-service.cjs
+      - name: Rich Presence UI contract
+        run: node scripts/test-rich-presence-ui-contract.cjs
+      - name: Live counter contract
+        run: node scripts/test-live-achievement-counters.cjs
+      - name: Authority and forbidden-endpoint guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'const progress = baseProgress;' app/electron/main.cjs
+          ! grep -R -nE "r: ['\"](startsession|ping|awardachievement|submitlbentry)['\"]" app/electron native/rcheevos-runtime-helper
+      - name: Production build
+        working-directory: app
+        run: npm run build
