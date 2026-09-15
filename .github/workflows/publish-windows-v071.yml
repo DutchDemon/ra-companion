@@ -1,0 +1,130 @@
+name: Publish Windows v0.7.1 Validated Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-windows-v071.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+env:
+  RELEASE_VERSION: 0.7.1
+  RELEASE_TAG: v0.7.1
+  SOURCE_RUN_ID: '34946418383'
+  SOURCE_HEAD_SHA: '4710773c721785c429ed3f22678c621d9547e7d0'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify validated source run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" --jq '.head_sha')
+          test "$ACTUAL_SHA" = "$SOURCE_HEAD_SHA"
+
+          BUILD_RESULT=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs?per_page=100" --jq '.jobs[] | select(.name == "build") | .conclusion')
+          CLAM_RESULT=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs?per_page=100" --jq '.jobs[] | select(.name == "clamav") | .conclusion')
+          test "$BUILD_RESULT" = 'success'
+          test "$CLAM_RESULT" = 'success'
+
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; refusing to replace it."
+            exit 1
+          fi
+
+      - name: Download validated Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ra-companion-v0.7.1-windows
+          path: payload
+          repository: ${{ github.repository }}
+          run-id: 34946418383
+          github-token: ${{ github.token }}
+
+      - name: Download validated ClamAV artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ra-companion-v0.7.1-antivirus
+          path: antivirus
+          repository: ${{ github.repository }}
+          run-id: 34946418383
+          github-token: ${{ github.token }}
+
+      - name: Verify and prepare updater payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT='payload/release'
+          INSTALLER="$ROOT/RA Companion Setup 0.7.1.exe"
+          BLOCKMAP="$ROOT/RA Companion Setup 0.7.1.exe.blockmap"
+          LATEST="$ROOT/latest.yml"
+          test -f "$INSTALLER"
+          test -f "$BLOCKMAP"
+          test -f "$LATEST"
+          test -f "$ROOT/checksums.txt"
+          test -f "$ROOT/defender-scan.txt"
+          test -f 'payload/release-helper-self-test.txt'
+          test -f 'antivirus/clamav-scan.txt'
+
+          grep -q '^version: 0.7.1$' "$LATEST"
+          grep -q 'RESULT: NO DETECTION' "$ROOT/defender-scan.txt"
+
+          EXPECTED_PATH=$(awk '/^path:/ {print $2; exit}' "$LATEST" | tr -d '\r')
+          test -n "$EXPECTED_PATH"
+          EXPECTED_SHA512=$(awk '/^sha512:/ {print $2; exit}' "$LATEST" | tr -d '\r')
+          ACTUAL_SHA512=$(openssl dgst -sha512 -binary "$INSTALLER" | base64 -w0)
+          test "$ACTUAL_SHA512" = "$EXPECTED_SHA512"
+
+          cp "$INSTALLER" "$ROOT/$EXPECTED_PATH"
+          cp "$BLOCKMAP" "$ROOT/$EXPECTED_PATH.blockmap"
+          test -f "$ROOT/$EXPECTED_PATH"
+          test -f "$ROOT/$EXPECTED_PATH.blockmap"
+          echo "UPDATER_INSTALLER=$EXPECTED_PATH" >> "$GITHUB_ENV"
+
+      - name: Publish GitHub Release v0.7.1
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<'NOTES'
+          ## RA Companion v0.7.1 — UI & Faron Context Fix
+
+          This patch cleans up duplicated live information and fixes the early Faron Twilight next-step guidance.
+
+          - Removes the redundant hearts / Poe Souls / Golden Bugs / Link-form strip from the overlay.
+          - Removes the separate Live Achievement Progress panels from the overlay, Dashboard and Current Game.
+          - Keeps official rcheevos measured progress available directly on relevant achievement rows as X/Y counters.
+          - When Faron Twilight has started but the Vessel of Light is still missing, the companion now surfaces **You Unlock This Door with the Key of Imagination** as the next story beat.
+          - Shows **Coming soon · Obtain the Vessel of Light** for that prerequisite instead of falling back to a generic context message.
+
+          ### Integrity and safety
+          RetroAchievements remains authoritative for Completed/Locked state. The local runtime stays display/observer-only, Dolphin memory access remains read-only, and RA Companion does not submit gameplay sessions, pings, achievement unlocks or leaderboard entries.
+
+          The Windows release passed the full app regression suite, production build, pinned rcheevos helper checks, packaged-app validation, Microsoft Defender and ClamAV.
+          NOTES
+
+          ROOT='payload/release'
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_HEAD_SHA" \
+            --title 'RA Companion v0.7.1' \
+            --notes-file release-notes.md \
+            --latest \
+            "$ROOT/$UPDATER_INSTALLER" \
+            "$ROOT/$UPDATER_INSTALLER.blockmap" \
+            "$ROOT/latest.yml" \
+            "$ROOT/checksums.txt" \
+            "$ROOT/defender-scan.txt" \
+            'antivirus/clamav-scan.txt' \
+            'payload/release-helper-self-test.txt'
+
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,url,assets
