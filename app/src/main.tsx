@@ -388,11 +388,17 @@ function Overlay() {
   ].map(achievementId)).size;
   const contextPct = contextTotal ? Math.round((contextUnlocked / contextTotal) * 100) : 0;
   const currentStoryIds = new Set(companion.current.map(achievementId));
-  const nextStoryAchievements = uniqueAchievements([
+  const nextStorySeen = new Set<string>();
+  const nextStoryAchievements = [
     ...(pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : []),
     ...companion.comingUp,
-  ])
-    .filter((achievement: any) => !currentStoryIds.has(achievementId(achievement)))
+  ]
+    .filter((achievement: any) => {
+      const id = achievementId(achievement);
+      if (!id || currentStoryIds.has(id) || nextStorySeen.has(id)) return false;
+      nextStorySeen.add(id);
+      return true;
+    })
     .slice(0, 1);
 
   useEffect(() => {

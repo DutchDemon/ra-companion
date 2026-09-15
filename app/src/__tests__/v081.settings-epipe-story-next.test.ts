@@ -38,8 +38,9 @@ describe('v0.8.1 compact RA login, EPIPE hardening and story-next dedupe', () =>
   it('never renders the same achievement as Current Story Beat and Next Story Beat', () => {
     const main = source('src/main.tsx');
     expect(main).toContain('const currentStoryIds = new Set(companion.current.map(achievementId));');
-    expect(main).toContain('const nextStoryAchievements = uniqueAchievements([');
-    expect(main).toContain('.filter((achievement: any) => !currentStoryIds.has(achievementId(achievement)))');
+    expect(main).toContain('const nextStorySeen = new Set<string>();');
+    expect(main).toContain('const nextStoryAchievements = [');
+    expect(main).toContain('currentStoryIds.has(id) || nextStorySeen.has(id)');
     expect(main).toContain('achievements={nextStoryAchievements}');
     expect(main).not.toContain('achievements={pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : companion.comingUp}');
   });
