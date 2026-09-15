@@ -28,7 +28,9 @@ describe('v0.7.1 UI cleanup and Faron prerequisite fallback', () => {
     expect(renderer).not.toContain('v7-overlay-live-counters');
     expect(pages).not.toContain('LIVE ACHIEVEMENT PROGRESS');
     expect(renderer).toContain('findPendingFaronVesselObjective');
-    expect(renderer).toContain('pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : companion.comingUp');
+    expect(renderer).toContain('...(pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : [])');
+    expect(renderer).toContain('achievements={nextStoryAchievements}');
+    expect(renderer).toContain('currentStoryIds.has(id) || nextStorySeen.has(id)');
     expect(renderer).toContain('achievementCounter(achievement, ram, profile || null, runtimeLive) || state?.progress');
     expect(pages).toContain('achievementCounter(achievement, isCurrentGame ? effectiveRam : undefined, isCurrentGame) || state.progress');
   });
