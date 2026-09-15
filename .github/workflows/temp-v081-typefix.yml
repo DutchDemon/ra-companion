@@ -6,6 +6,7 @@ on:
       - feature/v0.8.1-settings-epipe-story-next
     paths:
       - '.github/workflows/temp-v081-typefix.yml'
+      - 'scripts/fix-v081-overlay.py'
 
 permissions:
   contents: write
@@ -18,47 +19,13 @@ jobs:
         with:
           ref: feature/v0.8.1-settings-epipe-story-next
       - name: Apply type-safe overlay dedupe
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('app/src/main.tsx')
-          text = p.read_text(encoding='utf-8')
-          old = """  const currentStoryIds = new Set(companion.current.map(achievementId));
-  const nextStoryAchievements = uniqueAchievements([
-    ...(pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : []),
-    ...companion.comingUp,
-  ])
-    .filter((achievement: any) => !currentStoryIds.has(achievementId(achievement)))
-    .slice(0, 1);"""
-          new = """  const currentStoryIds = new Set(companion.current.map(achievementId));
-  const nextStorySeen = new Set<string>();
-  const nextStoryAchievements = [
-    ...(pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : []),
-    ...companion.comingUp,
-  ]
-    .filter((achievement: any) => {
-      const id = achievementId(achievement);
-      if (!id || currentStoryIds.has(id) || nextStorySeen.has(id)) return false;
-      nextStorySeen.add(id);
-      return true;
-    })
-    .slice(0, 1);"""
-          if old not in text:
-              raise SystemExit('overlay dedupe anchor missing')
-          p.write_text(text.replace(old, new, 1), encoding='utf-8', newline='\n')
-
-          p = Path('app/src/__tests__/v081.settings-epipe-story-next.test.ts')
-          text = p.read_text(encoding='utf-8')
-          text = text.replace("expect(main).toContain('const nextStoryAchievements = uniqueAchievements([');", "expect(main).toContain('const nextStorySeen = new Set<string>();');\n    expect(main).toContain('const nextStoryAchievements = [');")
-          text = text.replace("expect(main).toContain('.filter((achievement: any) => !currentStoryIds.has(achievementId(achievement)))');", "expect(main).toContain('currentStoryIds.has(id) || nextStorySeen.has(id)');")
-          p.write_text(text, encoding='utf-8', newline='\n')
-          PY
+        run: python scripts/fix-v081-overlay.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Verify typecheck
-        shell: bash
+        working-directory: app
         run: |
-          set -euo pipefail
-          cd app
           npm install --no-audit --no-fund
           npm run typecheck
       - name: Commit fix
