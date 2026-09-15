@@ -1,0 +1,67 @@
+name: Wind Waker Test 2 Validation
+
+on:
+  push:
+    branches: [feature/wind-waker-test-2-profile-skeleton]
+    paths:
+      - '.github/workflows/wind-waker-test2-validation.yml'
+      - 'app/electron/game-profiles/**'
+      - 'scripts/test-wind-waker-profile.cjs'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/wind-waker-test2-validation.yml'
+      - 'app/electron/game-profiles/**'
+      - 'scripts/test-wind-waker-profile.cjs'
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Wind Waker profile skeleton regression
+        shell: pwsh
+        run: |
+          node --check app/electron/game-profiles/wind-waker.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Wind Waker profile syntax failed.' }
+          node --check app/electron/game-profiles/registry.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Game profile registry syntax failed.' }
+          node scripts/test-wind-waker-profile.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Wind Waker Test 2 regression failed.' }
+
+      - name: Guard observer-only authority boundary
+        shell: pwsh
+        run: |
+          $main = Get-Content 'app/electron/main.cjs' -Raw
+          if (-not $main.Contains('const progress = baseProgress;')) { throw 'Official RA completion authority invariant is missing.' }
+          if ($main.Contains('runtimeProgress =')) { throw 'Local runtime must not replace official RA progress.' }
+
+          $profile = Get-Content 'app/electron/game-profiles/wind-waker.cjs' -Raw
+          if ($profile -match '0x[0-9A-Fa-f]{6,8}') { throw 'Test 2 profile must not introduce Wind Waker RAM addresses.' }
+          if (-not $profile.Contains('enhanced: false')) { throw 'Wind Waker skeleton must remain raw/unmapped.' }
+
+          $runtimeData = Get-Content 'app/electron/services/ra-runtime-data-service.cjs' -Raw
+          foreach ($forbidden in @("r: 'startsession'", "r: 'ping'", "r: 'awardachievement'", "r: 'submitlbentry'")) {
+            if ($runtimeData.Contains($forbidden)) { throw "Forbidden RA submission/session endpoint found: $forbidden" }
+          }
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: TypeScript regressions and production build
+        working-directory: app
+        shell: pwsh
+        run: |
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript typecheck failed.' }
+          npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw 'Regression suite failed.' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Production build failed.' }
