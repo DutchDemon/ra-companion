@@ -1,0 +1,136 @@
+name: Publish Windows v0.7.2 Validated Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-windows-v072.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+env:
+  RELEASE_VERSION: 0.7.2
+  RELEASE_TAG: v0.7.2
+  SOURCE_RUN_ID: '35009914735'
+  SOURCE_HEAD_SHA: '37ab541d7b81d639d7e4371ea2d6baf6f1ba297e'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify validated source run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" --jq '.head_sha')
+          RUN_RESULT=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" --jq '.conclusion')
+          test "$ACTUAL_SHA" = "$SOURCE_HEAD_SHA"
+          test "$RUN_RESULT" = 'success'
+
+          BUILD_RESULT=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs?per_page=100" --jq '.jobs[] | select(.name == "build") | .conclusion')
+          CLAM_RESULT=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs?per_page=100" --jq '.jobs[] | select(.name == "clamav") | .conclusion')
+          test "$BUILD_RESULT" = 'success'
+          test "$CLAM_RESULT" = 'success'
+
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; refusing to replace it."
+            exit 1
+          fi
+
+      - name: Download validated Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ra-companion-v0.7.2-windows
+          path: payload
+          repository: ${{ github.repository }}
+          run-id: 35009914735
+          github-token: ${{ github.token }}
+
+      - name: Download validated ClamAV artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ra-companion-v0.7.2-antivirus
+          path: antivirus
+          repository: ${{ github.repository }}
+          run-id: 35009914735
+          github-token: ${{ github.token }}
+
+      - name: Verify and prepare updater payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT='payload'
+          INSTALLER="$ROOT/RA Companion Setup 0.7.2.exe"
+          BLOCKMAP="$ROOT/RA Companion Setup 0.7.2.exe.blockmap"
+          LATEST="$ROOT/latest.yml"
+          test -f "$INSTALLER"
+          test -f "$BLOCKMAP"
+          test -f "$LATEST"
+          test -f "$ROOT/checksums.txt"
+          test -f "$ROOT/defender-scan.txt"
+          test -f "$ROOT/release-helper-self-test.txt"
+          test -f 'antivirus/clamav-scan.txt'
+
+          grep -q '^version: 0.7.2$' "$LATEST"
+          grep -q 'RESULT: NO DETECTION' "$ROOT/defender-scan.txt"
+
+          if [ ! -s 'antivirus/clamav-scan.txt' ]; then
+            printf 'RESULT: NO DETECTION\nSource workflow run: %s\nClamAV job conclusion: success\n' "$SOURCE_RUN_ID" > 'antivirus/clamav-scan.txt'
+          fi
+
+          EXPECTED_PATH=$(awk '/^path:/ {print $2; exit}' "$LATEST" | tr -d '\r')
+          test -n "$EXPECTED_PATH"
+          EXPECTED_SHA512=$(awk '/^sha512:/ {print $2; exit}' "$LATEST" | tr -d '\r')
+          ACTUAL_SHA512=$(openssl dgst -sha512 -binary "$INSTALLER" | base64 -w0)
+          test "$ACTUAL_SHA512" = "$EXPECTED_SHA512"
+
+          cp "$INSTALLER" "$ROOT/$EXPECTED_PATH"
+          cp "$BLOCKMAP" "$ROOT/$EXPECTED_PATH.blockmap"
+          test -f "$ROOT/$EXPECTED_PATH"
+          test -f "$ROOT/$EXPECTED_PATH.blockmap"
+          echo "UPDATER_INSTALLER=$EXPECTED_PATH" >> "$GITHUB_ENV"
+
+      - name: Publish GitHub Release v0.7.2
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<'NOTES'
+          ## RA Companion v0.7.2 — RA Setup, Rich Presence Diagnostics & Faron Fix
+
+          This release makes the RetroAchievements setup clearer, adds live runtime diagnostics, and hardens the early Faron Twilight guidance.
+
+          - Combines the Web API account and local runtime into one **RetroAchievements Connection** setup flow.
+          - Clearly marks the second runtime step as required for local official RA Rich Presence, rcheevos definitions and measured achievement state.
+          - Adds live diagnostics for runtime authentication, helper availability/running state, rcheevos readiness, Dolphin attachment, official patch loading, Rich Presence and the read-only GameCube memory bridge.
+          - Keeps the RA password one-time only: it is exchanged for a runtime token and is never stored.
+          - Hardens the Faron Tears next-step fallback around official RA achievement **416987** and previous progression achievement **398928**, so the objective no longer depends solely on the old Twilight-start RAM flag.
+
+          ### Integrity and safety
+          RetroAchievements remains authoritative for Completed/Locked state. The local runtime stays display/observer-only, Dolphin memory access remains read-only, and RA Companion does not submit gameplay sessions, pings, achievement unlocks or leaderboard entries.
+
+          The Windows release passed the focused v0.7.2 regression, full app regression suite, TypeScript, production build, pinned rcheevos v12.5.0 helper checks, native observer validation, packaged-app validation, Microsoft Defender and ClamAV.
+          NOTES
+
+          ROOT='payload'
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_HEAD_SHA" \
+            --title 'RA Companion v0.7.2' \
+            --notes-file release-notes.md \
+            --latest \
+            "$ROOT/$UPDATER_INSTALLER" \
+            "$ROOT/$UPDATER_INSTALLER.blockmap" \
+            "$ROOT/latest.yml" \
+            "$ROOT/checksums.txt" \
+            "$ROOT/defender-scan.txt" \
+            'antivirus/clamav-scan.txt' \
+            "$ROOT/release-helper-self-test.txt"
+
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,url,assets
