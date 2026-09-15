@@ -1,0 +1,366 @@
+name: Build and Release Windows v0.8.1
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-release-windows-v081.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-v081
+  cancel-in-progress: false
+
+env:
+  RELEASE_VERSION: 0.8.1
+  RELEASE_TAG: v0.8.1
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify source and release boundary
+        shell: pwsh
+        run: |
+          $pkg = Get-Content 'app/package.json' -Raw | ConvertFrom-Json
+          if ($pkg.version -ne $env:RELEASE_VERSION) { throw "Source package version is $($pkg.version), expected $env:RELEASE_VERSION" }
+          if (-not (Test-Path 'app/src/__tests__/v081.settings-epipe-story-next.test.ts')) { throw 'v0.8.1 regression is missing.' }
+          if (-not (Test-Path 'scripts/test-runtime-helper-epipe.cjs')) { throw 'EPIPE regression script is missing.' }
+          if (-not (Test-Path 'app/src/__tests__/v080.story-route.test.ts')) { throw 'v0.8.0 story-route regression is missing.' }
+
+          $main = Get-Content 'app/electron/main.cjs' -Raw
+          if (-not $main.Contains('const progress = baseProgress;')) { throw 'Official RA completion authority invariant is missing.' }
+          if ($main.Contains('runtimeProgress =')) { throw 'Local runtime must not replace official RA progress.' }
+
+          $runtimeData = Get-Content 'app/electron/services/ra-runtime-data-service.cjs' -Raw
+          foreach ($forbidden in @("r: 'startsession'", "r: 'ping'", "r: 'awardachievement'", "r: 'submitlbentry'")) {
+            if ($runtimeData.Contains($forbidden)) { throw "Forbidden RA submission/session endpoint found: $forbidden" }
+          }
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Focused v0.8.1 regression
+        working-directory: app
+        run: npx vitest run src/__tests__/v081.settings-epipe-story-next.test.ts --environment jsdom
+
+      - name: Preserve v0.8.0 story-route regression
+        working-directory: app
+        run: npx vitest run src/__tests__/v080.story-route.test.ts --environment jsdom
+
+      - name: Runtime helper EPIPE regression
+        shell: pwsh
+        run: |
+          node --check app/electron/services/runtime-helper-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper service syntax check failed.' }
+          node scripts/test-runtime-helper-epipe.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper EPIPE regression failed.' }
+
+      - name: TypeScript and full regressions
+        working-directory: app
+        shell: pwsh
+        run: |
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript typecheck failed.' }
+          npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw 'Regression suite failed.' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Production build failed.' }
+
+      - name: Runtime and observer contract regressions
+        shell: pwsh
+        run: |
+          node scripts/test-ra-runtime-data-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'RA runtime data regression failed.' }
+          node scripts/test-observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer runtime regression failed.' }
+          node scripts/test-rich-presence-ui-contract.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Rich Presence UI regression failed.' }
+          node scripts/test-live-achievement-counters.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Live counter regression failed.' }
+
+      - name: Build pinned rcheevos helper
+        shell: pwsh
+        run: |
+          ./scripts/build-runtime-helper.ps1 -Configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper build failed.' }
+
+      - name: Validate observer and read-only helper
+        shell: pwsh
+        run: |
+          node scripts/test-observer-runtime-integration.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer/native integration failed.' }
+          $helper = (Resolve-Path 'app/tools/ra-runtime-helper.exe').Path
+          $raw = & $helper --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime helper self-test failed.' }
+          $self = $raw | ConvertFrom-Json
+          if (-not $self.ok -or -not $self.runtimeParser -or -not $self.gameCubeMemoryMapping -or -not $self.observerRuntime -or -not $self.richPresenceRuntime -or -not $self.readOnlyBridge) {
+            throw 'Runtime helper capability validation failed.'
+          }
+          if ($self.rcheevosTag -ne 'v12.5.0') { throw "Unexpected rcheevos tag: $($self.rcheevosTag)" }
+          $raw | Set-Content 'app/release-helper-self-test.txt'
+
+      - name: Build NSIS installer
+        working-directory: app
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npx electron-builder --win nsis --x64 --publish never
+          if ($LASTEXITCODE -ne 0) { throw 'electron-builder failed.' }
+
+      - name: Verify packaged v0.8.1 and generate checksums
+        shell: pwsh
+        run: |
+          $packagedRoot = 'app/release/win-unpacked/resources/app'
+          $packagedMain = Join-Path $packagedRoot 'electron/main.cjs'
+          $packagedHelper = Join-Path $packagedRoot 'tools/ra-runtime-helper.exe'
+          $packagedPackage = Join-Path $packagedRoot 'package.json'
+          $packagedDist = Join-Path $packagedRoot 'dist'
+          foreach ($required in @($packagedMain, $packagedHelper, $packagedPackage, $packagedDist)) {
+            if (-not (Test-Path $required)) { throw "Packaged app is missing release file: $required" }
+          }
+
+          $packagedVersion = (Get-Content $packagedPackage -Raw | ConvertFrom-Json).version
+          if ($packagedVersion -ne $env:RELEASE_VERSION) { throw "Packaged version is $packagedVersion, expected $env:RELEASE_VERSION" }
+          $main = Get-Content $packagedMain -Raw
+          if (-not $main.Contains('const progress = baseProgress;')) { throw 'Packaged completion-authority invariant is missing.' }
+
+          $rendererText = (Get-ChildItem $packagedDist -Recurse -File -Filter '*.js' | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n"
+          foreach ($requiredText in @('Save & connect', 'Current Story Beat', 'Next Story Beat', 'Diagnostics')) {
+            if (-not $rendererText.Contains($requiredText)) { throw "Packaged renderer is missing expected v0.8.1 UI text: $requiredText" }
+          }
+
+          $raw = & $packagedHelper --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged helper self-test failed.' }
+          $self = $raw | ConvertFrom-Json
+          if (-not $self.ok -or -not $self.observerRuntime -or -not $self.richPresenceRuntime -or -not $self.readOnlyBridge) { throw 'Packaged helper validation failed.' }
+          if ($self.rcheevosTag -ne 'v12.5.0') { throw "Unexpected packaged rcheevos tag: $($self.rcheevosTag)" }
+
+          $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq "RA Companion Setup $env:RELEASE_VERSION.exe" } | Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer was not generated.' }
+          $blockmap = "$($installer.FullName).blockmap"
+          if (-not (Test-Path $blockmap)) { throw 'Installer blockmap was not generated.' }
+          if (-not (Test-Path 'app/release/latest.yml')) { throw 'latest.yml was not generated.' }
+          $latest = Get-Content 'app/release/latest.yml' -Raw
+          if (-not $latest.Contains("version: $env:RELEASE_VERSION")) { throw 'latest.yml version is incorrect.' }
+
+          "INSTALLER_PATH=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "INSTALLER_NAME=$($installer.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+          $installerSha256 = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $installerSha512 = (Get-FileHash $installer.FullName -Algorithm SHA512).Hash.ToLowerInvariant()
+          $helperSha256 = (Get-FileHash $packagedHelper -Algorithm SHA256).Hash.ToLowerInvariant()
+          @(
+            "Release: v$env:RELEASE_VERSION",
+            "Commit: $env:GITHUB_SHA",
+            "Installer: $($installer.Name)",
+            "Installer SHA256: $installerSha256",
+            "Installer SHA512: $installerSha512",
+            "Runtime helper SHA256: $helperSha256",
+            "rcheevos: v12.5.0"
+          ) | Set-Content 'app/release/checksums.txt'
+
+      - name: Microsoft Defender scan
+        shell: pwsh
+        run: |
+          $packagedHelper = (Resolve-Path 'app/release/win-unpacked/resources/app/tools/ra-runtime-helper.exe').Path
+          $report = 'app/release/defender-scan.txt'
+          "Installer: $env:INSTALLER_PATH" | Set-Content $report
+          "Helper: $packagedHelper" | Add-Content $report
+          $status = Get-MpComputerStatus -ErrorAction Stop
+          "AntivirusEnabled: $($status.AntivirusEnabled)" | Add-Content $report
+          "AntivirusSignatureVersion: $($status.AntivirusSignatureVersion)" | Add-Content $report
+          if ($status.AntivirusEnabled) {
+            Start-MpScan -ScanType CustomScan -ScanPath $env:INSTALLER_PATH -ErrorAction Stop
+            Start-MpScan -ScanType CustomScan -ScanPath $packagedHelper -ErrorAction Stop
+            Start-Sleep -Seconds 2
+            $hits = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
+              ($_.Resources -join ';') -like "*$($env:INSTALLER_NAME)*" -or ($_.Resources -join ';') -like '*ra-runtime-helper.exe*'
+            })
+            if ($hits.Count -gt 0) {
+              'RESULT: DETECTION' | Add-Content $report
+              $hits | Format-List * | Out-String | Add-Content $report
+              throw 'Microsoft Defender detected a release artifact.'
+            }
+          }
+          'RESULT: NO DETECTION' | Add-Content $report
+          Get-Content $report
+
+      - name: Stage validated release payload
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force 'release-payload/release' | Out-Null
+          New-Item -ItemType Directory -Force 'release-payload/scan' | Out-Null
+          Copy-Item $env:INSTALLER_PATH 'release-payload/release/'
+          Copy-Item "$env:INSTALLER_PATH.blockmap" 'release-payload/release/'
+          Copy-Item 'app/release/latest.yml' 'release-payload/release/latest.yml'
+          Copy-Item 'app/release/checksums.txt' 'release-payload/release/checksums.txt'
+          Copy-Item 'app/release/defender-scan.txt' 'release-payload/release/defender-scan.txt'
+          Copy-Item 'app/release-helper-self-test.txt' 'release-payload/release-helper-self-test.txt'
+          Copy-Item 'app/release/win-unpacked/resources/app/tools/ra-runtime-helper.exe' 'release-payload/scan/ra-runtime-helper.exe'
+
+      - name: Upload Windows release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: ra-companion-v0.8.1-windows
+          if-no-files-found: error
+          path: release-payload/**
+
+  clamav:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ra-companion-v0.8.1-windows
+          path: payload
+
+      - name: Install and update ClamAV
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clamav clamav-freshclam
+          sudo systemctl stop clamav-freshclam.service || true
+          sudo pkill -x freshclam || true
+          sudo freshclam
+          clamscan --version
+
+      - name: ClamAV scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          INSTALLER=$(find payload -type f -name 'RA Companion Setup 0.8.1.exe' -print -quit)
+          HELPER=$(find payload -type f -name 'ra-runtime-helper.exe' -print -quit)
+          test -n "$INSTALLER"
+          test -n "$HELPER"
+          REPORT='clamav-scan.txt'
+          printf 'ClamAV scan for RA Companion v0.8.1\n' > "$REPORT"
+          set +e
+          clamscan --no-summary "$INSTALLER" "$HELPER" >> "$REPORT" 2>&1
+          rc=$?
+          set -e
+          if [ $rc -ne 0 ]; then
+            printf 'RESULT: DETECTION OR SCAN ERROR\n' >> "$REPORT"
+            cat "$REPORT"
+            exit $rc
+          fi
+          printf 'RESULT: NO DETECTION\n' >> "$REPORT"
+          cat "$REPORT"
+
+      - name: Upload ClamAV report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ra-companion-v0.8.1-antivirus
+          path: clamav-scan.txt
+          if-no-files-found: error
+
+  release:
+    if: github.ref == 'refs/heads/main'
+    needs: [build, clamav]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse to overwrite an existing v0.8.1 release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; refusing to replace it."
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ra-companion-v0.8.1-windows
+          path: payload
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ra-companion-v0.8.1-antivirus
+          path: antivirus
+
+      - name: Verify updater payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT='payload/release'
+          INSTALLER="$ROOT/RA Companion Setup 0.8.1.exe"
+          BLOCKMAP="$ROOT/RA Companion Setup 0.8.1.exe.blockmap"
+          LATEST="$ROOT/latest.yml"
+          test -f "$INSTALLER"
+          test -f "$BLOCKMAP"
+          test -f "$LATEST"
+          test -f "$ROOT/checksums.txt"
+          test -f "$ROOT/defender-scan.txt"
+          test -f 'payload/release-helper-self-test.txt'
+          test -s 'antivirus/clamav-scan.txt'
+          grep -q '^version: 0.8.1$' "$LATEST"
+          grep -q 'RESULT: NO DETECTION' "$ROOT/defender-scan.txt"
+          grep -q 'RESULT: NO DETECTION' 'antivirus/clamav-scan.txt'
+
+          EXPECTED_PATH=$(awk '/^path:/ {print $2; exit}' "$LATEST" | tr -d '\r')
+          EXPECTED_SHA512=$(awk '/^sha512:/ {print $2; exit}' "$LATEST" | tr -d '\r')
+          test -n "$EXPECTED_PATH"
+          test -n "$EXPECTED_SHA512"
+          ACTUAL_SHA512=$(openssl dgst -sha512 -binary "$INSTALLER" | base64 -w0)
+          test "$ACTUAL_SHA512" = "$EXPECTED_SHA512"
+          cp "$INSTALLER" "$ROOT/$EXPECTED_PATH"
+          cp "$BLOCKMAP" "$ROOT/$EXPECTED_PATH.blockmap"
+          echo "UPDATER_INSTALLER=$EXPECTED_PATH" >> "$GITHUB_ENV"
+
+      - name: Publish GitHub Release v0.8.1
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<'NOTES'
+          ## RA Companion v0.8.1 — Compact RA Login, Runtime Stability & Story Dedupe
+
+          This patch tightens the RetroAchievements connection flow and fixes two runtime/story presentation issues.
+
+          - Replaces the split account/runtime setup with one compact **Username / Password / API Key** RetroAchievements connection card.
+          - **Save & connect** verifies the Web API account and creates a runtime token only when one is needed.
+          - Reuses the stored Web API key and OS-encrypted runtime token across restarts, so you do not have to keep logging in.
+          - Keeps the RetroAchievements password one-time only; it is never stored.
+          - Hardens runtime-helper stdin/shutdown handling against **EPIPE** and destroyed-stream races.
+          - Prevents the same achievement from appearing simultaneously as **Current Story Beat** and **Next Story Beat**.
+          - Keeps the full v0.8.0 Twilight Princess story-route behavior, live Rich Presence, measured counters and read-only Dolphin context.
+
+          ### Integrity and safety
+          RetroAchievements remains authoritative for Completed/Locked state. The local rcheevos runtime remains observer/display-only, Dolphin memory access remains read-only, and RA Companion does not submit gameplay sessions, gameplay pings, achievement unlocks or leaderboard entries.
+
+          The Windows release passed the focused v0.8.1 login/EPIPE/story-dedupe regressions, the v0.8.0 story-route regression, full regression suite, TypeScript, production build, runtime/observer/Rich Presence/counter checks, pinned rcheevos v12.5.0 helper validation, packaged-app validation, Microsoft Defender and ClamAV.
+          NOTES
+
+          ROOT='payload/release'
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title 'RA Companion v0.8.1' \
+            --notes-file release-notes.md \
+            --latest \
+            "$ROOT/$UPDATER_INSTALLER" \
+            "$ROOT/$UPDATER_INSTALLER.blockmap" \
+            "$ROOT/latest.yml" \
+            "$ROOT/checksums.txt" \
+            "$ROOT/defender-scan.txt" \
+            'antivirus/clamav-scan.txt' \
+            'payload/release-helper-self-test.txt'
+
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,url,assets
