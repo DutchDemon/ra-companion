@@ -1,23 +1,29 @@
-name: Build Windows Installer v0.7.0
+name: Build and Release Windows v0.7.1
 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
+      - release/v0.7.1
     paths:
       - 'app/package.json'
-      - '.github/workflows/build-windows-v070.yml'
+      - 'app/src/**'
+      - 'app/electron/**'
+      - 'native/rcheevos-runtime-helper/**'
+      - 'scripts/**'
+      - '.github/workflows/build-windows-v071.yml'
 
 permissions:
   contents: write
 
 concurrency:
-  group: windows-release-v070-${{ github.ref }}
+  group: windows-release-v071-${{ github.ref }}
   cancel-in-progress: false
 
 env:
-  RELEASE_VERSION: 0.7.0
-  RELEASE_TAG: v0.7.0
+  RELEASE_VERSION: 0.7.1
+  RELEASE_TAG: v0.7.1
 
 jobs:
   build:
@@ -30,7 +36,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Verify release source and authority boundary
+      - name: Verify v0.7.1 source and authority boundary
         shell: pwsh
         run: |
           $pkg = Get-Content 'app/package.json' -Raw | ConvertFrom-Json
@@ -58,14 +64,21 @@ jobs:
           }
 
           $renderer = Get-Content 'app/src/main.tsx' -Raw
-          if (-not $renderer.Contains('selectLiveAchievementCounters')) { throw 'Live achievement counter selection is missing.' }
-          if (-not $renderer.Contains("counter.source === 'rcheevos' ? 'RA measured · rcheevos'")) { throw 'rcheevos measured counter provenance is missing.' }
+          $pages = Get-Content 'app/src/AppPages.tsx' -Raw
+          if ($renderer.Contains('v6-overlay-live-stats')) { throw 'Removed live-stat strip is still rendered.' }
+          if ($renderer.Contains('v7-overlay-live-counters')) { throw 'Removed overlay live-progress panel is still rendered.' }
+          if ($pages.Contains('LIVE ACHIEVEMENT PROGRESS')) { throw 'Removed dashboard/current-game live-progress panel is still rendered.' }
+          if (-not $renderer.Contains('findPendingFaronVesselObjective')) { throw 'Faron Vessel next-step fallback is missing.' }
+          if (-not $renderer.Contains('achievementCounter(achievement, ram, profile || null, runtimeLive) || state?.progress')) { throw 'Inline achievement counter fallback is missing.' }
+
+          node scripts/test-live-achievement-counters.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Live achievement counter contract failed.' }
 
       - name: Install dependencies
         working-directory: app
         run: npm install --no-audit --no-fund
 
-      - name: Typecheck, regressions and production build
+      - name: Typecheck regressions and production build
         working-directory: app
         shell: pwsh
         run: |
@@ -107,16 +120,15 @@ jobs:
           npx electron-builder --win nsis --x64 --publish never
           if ($LASTEXITCODE -ne 0) { throw 'electron-builder failed.' }
 
-      - name: Verify packaged v0.7.0 and generate checksums
+      - name: Verify packaged v0.7.1 and generate checksums
         shell: pwsh
         run: |
           $packagedRoot = 'app/release/win-unpacked/resources/app'
           $packagedMain = Join-Path $packagedRoot 'electron/main.cjs'
-          $packagedObserver = Join-Path $packagedRoot 'electron/services/observer-runtime-service.cjs'
           $packagedRuntimeData = Join-Path $packagedRoot 'electron/services/ra-runtime-data-service.cjs'
           $packagedHelper = Join-Path $packagedRoot 'tools/ra-runtime-helper.exe'
           $packagedDist = Join-Path $packagedRoot 'dist'
-          foreach ($required in @($packagedMain, $packagedObserver, $packagedRuntimeData, $packagedHelper, $packagedDist)) {
+          foreach ($required in @($packagedMain, $packagedRuntimeData, $packagedHelper, $packagedDist)) {
             if (-not (Test-Path $required)) { throw "Packaged app is missing release file: $required" }
           }
 
@@ -131,8 +143,9 @@ jobs:
 
           $rendererText = (Get-ChildItem $packagedDist -Recurse -File -Filter '*.js' | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n"
           if (-not $rendererText.Contains('RA RICH PRESENCE')) { throw 'Packaged renderer is missing official Rich Presence.' }
-          if (-not $rendererText.Contains('LIVE ACHIEVEMENT PROGRESS')) { throw 'Packaged renderer is missing live achievement counters.' }
-          if (-not $rendererText.Contains('RA measured · rcheevos')) { throw 'Packaged renderer is missing rcheevos counter provenance.' }
+          if ($rendererText.Contains('LIVE ACHIEVEMENT PROGRESS')) { throw 'Packaged renderer still contains removed live-progress panel.' }
+          if ($rendererText.Contains('v6-overlay-live-stats')) { throw 'Packaged renderer still contains removed stat strip.' }
+          if (-not $rendererText.Contains('Obtain the Vessel of Light')) { throw 'Packaged renderer is missing Faron Vessel next-step text.' }
 
           $raw = & $packagedHelper --self-test
           if ($LASTEXITCODE -ne 0) { throw 'Packaged helper self-test failed.' }
@@ -140,25 +153,14 @@ jobs:
           if (-not $self.ok -or -not $self.observerRuntime -or -not $self.richPresenceRuntime -or -not $self.readOnlyBridge) { throw 'Packaged helper capability validation failed.' }
           if ($self.rcheevosTag -ne 'v12.5.0') { throw "Unexpected packaged rcheevos tag: $($self.rcheevosTag)" }
 
-          $appExe = Get-Item 'app/release/win-unpacked/RA Companion.exe' -ErrorAction Stop
-          Add-Type -AssemblyName System.Drawing
-          $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($appExe.FullName)
-          if (-not $icon) { throw 'Could not extract icon from packaged RA Companion.exe.' }
-          $bitmap = $icon.ToBitmap()
-          try {
-            $iconOut = Join-Path (Resolve-Path 'app/release') 'exe-icon.png'
-            $bitmap.Save($iconOut, [System.Drawing.Imaging.ImageFormat]::Png)
-            if ((Get-Item $iconOut).Length -lt 500) { throw 'Extracted packaged executable icon is unexpectedly small.' }
-          } finally {
-            $bitmap.Dispose()
-            $icon.Dispose()
-          }
-
           $expectedInstallerName = "RA Companion Setup $env:RELEASE_VERSION.exe"
           $installer = Get-ChildItem 'app/release/*.exe' | Where-Object { $_.Name -eq $expectedInstallerName } | Select-Object -First 1
           if (-not $installer) { throw "NSIS installer was not generated: $expectedInstallerName" }
           if (-not (Test-Path 'app/release/latest.yml')) { throw 'latest.yml was not generated.' }
           if (-not (Test-Path "$($installer.FullName).blockmap")) { throw 'Installer blockmap was not generated.' }
+
+          $latest = Get-Content 'app/release/latest.yml' -Raw
+          if (-not $latest.Contains("version: $env:RELEASE_VERSION")) { throw 'latest.yml version is incorrect.' }
 
           "INSTALLER_PATH=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
           "INSTALLER_NAME=$($installer.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -205,15 +207,14 @@ jobs:
       - name: Upload Windows release candidate
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.7.0-windows
+          name: ra-companion-v0.7.1-windows
           if-no-files-found: error
           path: |
-            app/release/RA Companion Setup 0.7.0.exe
-            app/release/RA Companion Setup 0.7.0.exe.blockmap
+            app/release/RA Companion Setup 0.7.1.exe
+            app/release/RA Companion Setup 0.7.1.exe.blockmap
             app/release/latest.yml
             app/release/checksums.txt
             app/release/defender-scan.txt
-            app/release/exe-icon.png
             app/release-helper-self-test.txt
             app/release/win-unpacked/resources/app/tools/ra-runtime-helper.exe
 
@@ -224,7 +225,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.7.0-windows
+          name: ra-companion-v0.7.1-windows
           path: artifact
 
       - name: Install and update ClamAV
@@ -243,7 +244,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          INSTALLER=$(find artifact -type f -name 'RA Companion Setup 0.7.0.exe' -print -quit)
+          INSTALLER=$(find artifact -type f -name 'RA Companion Setup 0.7.1.exe' -print -quit)
           HELPER=$(find artifact -type f -name 'ra-runtime-helper.exe' -print -quit)
           test -n "$INSTALLER"
           test -n "$HELPER"
@@ -257,7 +258,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ra-companion-v0.7.0-antivirus
+          name: ra-companion-v0.7.1-antivirus
           path: artifact/clamav-scan.txt
           if-no-files-found: error
 
@@ -269,37 +270,45 @@ jobs:
       - name: Download Windows build
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.7.0-windows
+          name: ra-companion-v0.7.1-windows
           path: release
 
       - name: Download ClamAV report
         uses: actions/download-artifact@v4
         with:
-          name: ra-companion-v0.7.0-antivirus
+          name: ra-companion-v0.7.1-antivirus
           path: antivirus
 
-      - name: Prepare updater payload
+      - name: Verify and prepare updater payload
         shell: bash
         run: |
           set -euo pipefail
-          INSTALLER='release/RA Companion Setup 0.7.0.exe'
-          BLOCKMAP='release/RA Companion Setup 0.7.0.exe.blockmap'
+          INSTALLER='release/RA Companion Setup 0.7.1.exe'
+          BLOCKMAP='release/RA Companion Setup 0.7.1.exe.blockmap'
+          LATEST='release/latest.yml'
           test -f "$INSTALLER"
           test -f "$BLOCKMAP"
-          test -f 'release/latest.yml'
+          test -f "$LATEST"
           test -f 'release/checksums.txt'
           test -f 'release/defender-scan.txt'
+          test -f 'release/release-helper-self-test.txt'
           test -f 'antivirus/clamav-scan.txt'
+          grep -q '^version: 0.7.1$' "$LATEST"
+          grep -q 'RESULT: NO DETECTION' 'release/defender-scan.txt'
 
-          EXPECTED_PATH=$(awk '/^path:/ {print $2; exit}' release/latest.yml | tr -d '\r')
+          EXPECTED_PATH=$(awk '/^path:/ {print $2; exit}' "$LATEST" | tr -d '\r')
           test -n "$EXPECTED_PATH"
+          EXPECTED_SHA512=$(awk '/^sha512:/ {print $2; exit}' "$LATEST" | tr -d '\r')
+          ACTUAL_SHA512=$(openssl dgst -sha512 -binary "$INSTALLER" | base64 -w0)
+          test "$ACTUAL_SHA512" = "$EXPECTED_SHA512"
+
           cp "$INSTALLER" "release/$EXPECTED_PATH"
           cp "$BLOCKMAP" "release/$EXPECTED_PATH.blockmap"
           test -f "release/$EXPECTED_PATH"
           test -f "release/$EXPECTED_PATH.blockmap"
           echo "UPDATER_INSTALLER=$EXPECTED_PATH" >> "$GITHUB_ENV"
 
-      - name: Publish GitHub Release v0.7.0
+      - name: Publish GitHub Release v0.7.1
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -311,32 +320,26 @@ jobs:
           fi
 
           cat > release-notes.md <<'NOTES'
-          ## RA Companion v0.7.0 — Live rcheevos Runtime
+          ## RA Companion v0.7.1 — UI & Faron Context Fix
 
-          This release moves RA Companion's live gameplay context onto the official RetroAchievements runtime definitions while keeping Dolphin memory strictly read-only.
+          This patch cleans up duplicated live information and fixes the early Faron Twilight next-step guidance.
 
-          - Adds separate RetroAchievements runtime authentication and official game patch data loading.
-          - Evaluates official RetroAchievements Rich Presence locally through pinned rcheevos v12.5.0.
-          - Shows live Rich Presence in Current Game Session, Current Game and the gameplay overlay.
-          - Adds reliable live X/Y achievement counters from rcheevos measured progress.
-          - Falls back to RA API measured progress and explicitly supported read-only RAM counters when needed.
-          - Keeps Twilight Princess live RAM context available as a fallback for game-specific information.
-          - Keeps observer runtime state isolated across game/account changes.
-          - Preserves the existing overlay stability, Windows taskbar/icon fixes and updater support.
+          - Removes the redundant hearts / Poe Souls / Golden Bugs / Link-form strip from the overlay.
+          - Removes the separate Live Achievement Progress panels from the overlay, Dashboard and Current Game.
+          - Keeps official rcheevos measured progress available directly on relevant achievement rows as X/Y counters.
+          - When Faron Twilight has started but the Vessel of Light is still missing, the companion now surfaces **You Unlock This Door with the Key of Imagination** as the next story beat.
+          - Shows **Coming soon · Obtain the Vessel of Light** for that prerequisite instead of falling back to a generic context message.
 
           ### Integrity and safety
-          Completed/Locked state remains authoritative from the RetroAchievements server. The local runtime is display/observer-only, Dolphin access remains read-only, and RA Companion does not submit gameplay sessions, pings, achievement unlocks or leaderboard entries.
+          RetroAchievements remains authoritative for Completed/Locked state. The local runtime stays display/observer-only, Dolphin memory access remains read-only, and RA Companion does not submit gameplay sessions, pings, achievement unlocks or leaderboard entries.
 
-          ### Known limitation
-          Chest achievements without official measured progress will not show an X/Y counter until their exact chest/Tbox flag mapping has been verified. RA Companion deliberately does not guess those mappings.
-
-          Release artifacts are published only after the full TypeScript/regression/production build, pinned native rcheevos validation, packaged-app checks, Microsoft Defender and ClamAV pass.
+          The Windows release was validated with the full app regression suite, production build, pinned rcheevos helper checks, Microsoft Defender and ClamAV.
           NOTES
 
           gh release create "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "RA Companion v0.7.0" \
+            --title 'RA Companion v0.7.1' \
             --notes-file release-notes.md \
             --latest \
             "release/$UPDATER_INSTALLER" \
