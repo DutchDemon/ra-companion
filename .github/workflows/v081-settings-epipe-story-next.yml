@@ -1,0 +1,67 @@
+name: v0.8.1 Settings + EPIPE + Story Next Validation
+
+on:
+  push:
+    branches:
+      - feature/v0.8.1-settings-epipe-story-next
+    paths:
+      - 'app/**'
+      - 'scripts/test-runtime-helper-epipe.cjs'
+      - '.github/workflows/v081-settings-epipe-story-next.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'scripts/test-runtime-helper-epipe.cjs'
+      - '.github/workflows/v081-settings-epipe-story-next.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: Focused v0.8.1 regression
+        working-directory: app
+        run: npx vitest run src/__tests__/v081.settings-epipe-story-next.test.ts --environment jsdom
+
+      - name: Runtime helper EPIPE regression
+        run: |
+          node --check app/electron/services/runtime-helper-service.cjs
+          node scripts/test-runtime-helper-epipe.cjs
+
+      - name: TypeScript
+        working-directory: app
+        run: npm run typecheck
+
+      - name: Full regression suite
+        working-directory: app
+        run: npm run test:regressions
+
+      - name: Runtime and observer regression
+        run: |
+          node scripts/test-ra-runtime-data-service.cjs
+          node scripts/test-observer-runtime-service.cjs
+          node scripts/test-rich-presence-ui-contract.cjs
+          node scripts/test-live-achievement-counters.cjs
+
+      - name: Preserve RA completion authority boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'const progress = baseProgress;' app/electron/main.cjs
+          ! grep -R -nE "r: ['\"](startsession|ping|awardachievement|submitlbentry)['\"]" app/electron native/rcheevos-runtime-helper
+
+      - name: Production build
+        working-directory: app
+        run: npm run build
