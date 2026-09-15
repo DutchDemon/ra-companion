@@ -43,7 +43,9 @@ jobs:
           if ($renderer.Contains('v7-overlay-live-counters')) { throw 'Dedicated overlay live-progress panel is still rendered.' }
           if ($pages.Contains('LIVE ACHIEVEMENT PROGRESS')) { throw 'Dedicated app live-progress panel is still rendered.' }
           if (-not $renderer.Contains('findPendingFaronVesselObjective')) { throw 'Faron Vessel prerequisite fallback is not wired into renderer.' }
-          if (-not $renderer.Contains('pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : companion.comingUp')) { throw 'Overlay next-story fallback is missing.' }
+          if (-not $renderer.Contains('...(pendingFaronVesselAchievement ? [pendingFaronVesselAchievement] : [])')) { throw 'Faron Vessel next-story candidate is missing.' }
+          if (-not $renderer.Contains('achievements={nextStoryAchievements}')) { throw 'Deduplicated overlay next-story wiring is missing.' }
+          if (-not $renderer.Contains('currentStoryIds.has(id) || nextStorySeen.has(id)')) { throw 'Current/Next story dedupe guard is missing.' }
 
           $main = Get-Content 'app/electron/main.cjs' -Raw
           if (-not $main.Contains('const progress = baseProgress;')) { throw 'Official RA completion authority invariant is missing.' }
