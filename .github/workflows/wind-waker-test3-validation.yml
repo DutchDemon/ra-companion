@@ -2,7 +2,7 @@ name: Wind Waker Test 3 Memory Profile Validation
 
 on:
   push:
-    branches: [feature/wind-waker-test3-memory-profile]
+    branches: [feature/wind-waker-test3-memory-profile, fix/wind-waker-quarter-hearts]
     paths:
       - '.github/workflows/wind-waker-test3-validation.yml'
       - '.github/workflows/wind-waker-test2-validation.yml'
