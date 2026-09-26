@@ -26,6 +26,7 @@ export type GameSessionStats = {
   poeSouls: string;
   goldenBugs: string;
   contextStat: string;
+  dashboardStats?: Array<{ label: string; value: string }>;
 };
 
 export type RendererGameProfile = {
@@ -201,6 +202,71 @@ function twilightRamCounter(achievement: any, ram?: Snapshot['ram']): Achievemen
   return null;
 }
 
+const WIND_WAKER_GAME_CODES: readonly string[] = Object.freeze(['GZLP01']);
+
+function windWakerSessionStats(ram?: Snapshot['ram']): GameSessionStats {
+  const live = Boolean(ram?.attached && !ram?.stale && WIND_WAKER_GAME_CODES.includes(String(ram?.gameCode || '').trim().toUpperCase()));
+  const location = live ? String(ram?.stageName || ram?.stageCode || '').trim() : '';
+  const hearts = typeof ram?.currentHearts === 'number' && typeof ram?.maxHearts === 'number'
+    ? `${ram.currentHearts}/${ram.maxHearts}`
+    : '—';
+  const rupees = typeof ram?.rupees === 'number' ? String(ram.rupees) : '—';
+  const stageCode = String(ram?.stageCode || '').trim() || '—';
+  const room = typeof ram?.room === 'number' ? String(ram.room) : '—';
+  return {
+    live,
+    location,
+    form: 'Link',
+    hearts,
+    poeSouls: '—',
+    goldenBugs: '—',
+    contextStat: rupees !== '—' ? `Rupees ${rupees}` : '',
+    dashboardStats: [
+      { label: 'Current form', value: 'Link' },
+      { label: 'Area / context', value: location || '—' },
+      { label: 'Hearts', value: hearts },
+      { label: 'Rupees', value: rupees },
+      { label: 'Stage / room', value: `${stageCode} · ${room}` },
+    ],
+  };
+}
+
+function buildWindWakerContext(_achievements: any[], presenceMessage: string, options: any) {
+  const live = Boolean(options?.live);
+  const label = live ? String(options?.stageName || options?.stageCode || '').trim() : '';
+  return {
+    context: { label, kind: live ? 'area' : '', boss: null },
+    missables: [],
+    current: [],
+    comingUp: [],
+    areaOpportunities: [],
+    storyChapter: null,
+    relevantAll: [],
+    routeLabel: live ? 'Wind Waker RAM context' : presenceMessage ? 'RetroAchievements context' : 'Wind Waker context',
+  };
+}
+
+export const WIND_WAKER_PROFILE: RendererGameProfile = Object.freeze({
+  key: 'wind-waker-gc-pal',
+  raGameId: 9190,
+  title: 'The Legend of Zelda: The Wind Waker',
+  platform: 'GameCube',
+  region: 'PAL / Europe',
+  enhanced: true,
+  gameCodes: WIND_WAKER_GAME_CODES,
+  matchesRam(ram) {
+    return Boolean(ram?.attached && !ram?.stale && WIND_WAKER_GAME_CODES.includes(String(ram?.gameCode || '').trim().toUpperCase()));
+  },
+  buildContext: buildWindWakerContext,
+  buildAchievementStates: () => new Map<string, GameAchievementState>(),
+  getMissableGuide: () => null,
+  isMissableAchievement: () => false,
+  getSessionStats: windWakerSessionStats,
+  // Official rcheevos Rich Presence remains the preferred live display source.
+  getRamPresence: () => '',
+  getRamCounter: () => null,
+});
+
 const TWILIGHT_PRINCESS_GAME_CODES: readonly string[] = Object.freeze(['GZ2E01']);
 
 export const TWILIGHT_PRINCESS_PROFILE: RendererGameProfile = Object.freeze({
@@ -225,6 +291,7 @@ export const TWILIGHT_PRINCESS_PROFILE: RendererGameProfile = Object.freeze({
 
 export const GAME_PROFILES: readonly RendererGameProfile[] = Object.freeze([
   TWILIGHT_PRINCESS_PROFILE,
+  WIND_WAKER_PROFILE,
 ]);
 
 export function getGameProfileByRaGameId(gameId?: number | null) {
