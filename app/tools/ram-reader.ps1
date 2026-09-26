@@ -118,6 +118,24 @@ $versions = @{
     'GZ2E01' = [pscustomobject]@{ Name = 'USA'; StartStage = (Convert-HexToUInt64 '8040AFC0'); StayRoom = (Convert-HexToUInt64 '80450D64') }
 }
 
+# GameMemoryProfile registry. Dolphin shared memory is the provider; each game
+# profile is responsible only for decoding its own verified guest-memory layout.
+$windWakerProfilePath = Join-Path $PSScriptRoot 'memory-profiles\wind-waker-gzlp01.ps1'
+. $windWakerProfilePath
+
+$gameMemoryProfiles = @{
+    'GZ2E01' = [pscustomobject]@{
+        Key = 'twilight-princess-gc-us'
+        GameCode = 'GZ2E01'
+        Region = 'USA'
+        Decoder = 'twilight-princess'
+        StartStage = $versions['GZ2E01'].StartStage
+        StayRoom = $versions['GZ2E01'].StayRoom
+        StageAddress = $versions['GZ2E01'].StartStage
+    }
+    'GZLP01' = (Get-WindWakerMemoryProfile)
+}
+
 # Actor process names from f_pc_name.h. The scanner is intentionally generic:
 # individual achievement rules consume these live actor summaries without writing game memory.
 $PROC_CUCCO = 0x0108 # fpcNm_NI_e / ni_class
@@ -230,16 +248,15 @@ function Get-ExpectedGameCode() {
     try {
         $proc = Get-Process -Id $TargetPid -ErrorAction Stop
         $title = [string]$proc.MainWindowTitle
-        if ($title -match '\((GZ2E01)\)') { return $Matches[1] }
+        if ($title -match '\((GZ2E01|GZLP01)\)') { return $Matches[1] }
     } catch {}
     return ''
 }
 
 function Read-SharedBytes([IntPtr]$viewBase, [uint64]$offset, [int]$count) {
     if ($viewBase -eq [IntPtr]::Zero -or $count -le 0) { return $null }
-    # Every address currently read from TP is within the first few MiB of MEM1,
-    # therefore IntPtr.Add's signed 32-bit offset is sufficient and avoids any
-    # PowerShell 5.1 signed/unsigned pointer conversions.
+    # GameCube MEM1 is 24 MiB, so every supported guest-memory read stays within
+    # IntPtr.Add's signed 32-bit offset range. This provider is read-only.
     if ($offset -gt [uint64][int]::MaxValue) { return $null }
     $buffer = New-Object byte[] $count
     try {
@@ -345,7 +362,7 @@ function Read-HeaderState($shared) {
     return [pscustomobject]@{
         GameCode = $gameCode
         Magic = $magic
-        Supported = $versions.ContainsKey($gameCode)
+        Supported = $gameMemoryProfiles.ContainsKey($gameCode)
     }
 }
 
@@ -685,6 +702,17 @@ function Read-CurrentState($shared, [string]$gameCode) {
     }
 }
 
+function Read-GameMemoryState($shared, [string]$gameCode) {
+    $profile = $gameMemoryProfiles[$gameCode]
+    if ($null -eq $profile) { return $null }
+
+    switch ([string]$profile.Decoder) {
+        'twilight-princess' { return Read-CurrentState $shared $gameCode }
+        'wind-waker-gzlp01' { return Read-WindWakerGzlp01State $shared $profile }
+        default { return $null }
+    }
+}
+
 $shared = $null
 $lastSerialized = ''
 $lastHeartbeat = 0L
@@ -735,7 +763,7 @@ try {
         }
 
         $expected = Get-ExpectedGameCode
-        $gameCode = if ($header.Supported) { $header.GameCode } elseif ($expected -and $versions.ContainsKey($expected)) { $expected } else { '' }
+        $gameCode = if ($header.Supported) { $header.GameCode } elseif ($expected -and $gameMemoryProfiles.ContainsKey($expected)) { $expected } else { '' }
 
         if (-not $header.Magic -or -not $header.Supported) {
             $displayCode = if ($header.GameCode) { $header.GameCode } else { '(blank)' }
@@ -749,18 +777,20 @@ try {
                 headerMagic = [bool]$header.Magic
                 expectedGameCode = $expected
                 hookSource = 'dolphin-shared-memory'
-                error = "Shared memory is open; waiting for a valid TP MEM1 header (code=$displayCode, magic=$($header.Magic))."
+                error = "Shared memory is open; waiting for a supported GameCube MEM1 header (code=$displayCode, magic=$($header.Magic))."
             }
             Start-Sleep -Milliseconds ([Math]::Max(250, $PollMs))
             continue
         }
 
-        $state = Read-CurrentState $shared $gameCode
+        $state = Read-GameMemoryState $shared $gameCode
         if ($null -eq $state) {
             $stageReadFailures++
             if ($stageReadFailures -eq 1 -or ($stageReadFailures % 10) -eq 0) {
-                $version = $versions[$gameCode]
-                $stageOffset = if ($version) { Guest-To-Offset ([uint64]$version.StartStage) } else { 0 }
+                $memoryProfile = $gameMemoryProfiles[$gameCode]
+                $stageGuest = if ($memoryProfile -and $memoryProfile.StageAddress) { [uint64]$memoryProfile.StageAddress } else { [uint64]0 }
+                $stageOffset = if ($stageGuest -gt 0) { Guest-To-Offset $stageGuest } else { 0 }
+                $profileLabel = if ($memoryProfile) { [string]$memoryProfile.Key } else { $gameCode }
                 Write-State @{
                     ok = $false
                     attached = $false
@@ -771,7 +801,8 @@ try {
                     headerMagic = [bool]$header.Magic
                     stageOffset = ('0x{0:X}' -f $stageOffset)
                     hookSource = 'dolphin-shared-memory'
-                    error = "TP shared memory is attached, but the current stage is not readable yet (attempt $stageReadFailures)."
+                    memoryProfile = $profileLabel
+                    error = "$profileLabel shared memory is attached, but the current stage is not readable yet (attempt $stageReadFailures)."
                 }
             }
             Start-Sleep -Milliseconds ([Math]::Max(50, $PollMs))

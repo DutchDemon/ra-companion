@@ -647,7 +647,7 @@ function App() {
   const presenceSource = officialPresenceMessage ? 'rcheevos-runtime' : fastRamPresence ? 'ram' : fallbackSnapshotPresence ? (snapshot?.presence?.source || 'retro-achievements') : 'none';
   const runtimeLive = snapshot?.runtime?.live;
   const ramRoom = typeof effectiveRam?.room === 'number' ? effectiveRam.room : null;
-  const sessionStats = useMemo(() => liveSessionStats(effectiveRam, activeProfile), [effectiveRam?.timestamp, effectiveRam?.stageCode, effectiveRam?.currentHearts, effectiveRam?.maxHearts, effectiveRam?.poeSouls, effectiveRam?.goldenBugs, effectiveRam?.faronTears, effectiveRam?.storyFlags]);
+  const sessionStats = useMemo(() => liveSessionStats(effectiveRam, activeProfile), [effectiveRam?.timestamp, effectiveRam?.gameCode, effectiveRam?.stageCode, effectiveRam?.stageName, effectiveRam?.room, effectiveRam?.currentHearts, effectiveRam?.maxHearts, effectiveRam?.rupees, effectiveRam?.poeSouls, effectiveRam?.goldenBugs, effectiveRam?.faronTears, effectiveRam?.storyFlags]);
   const currentAchievementCounter = (achievement: any, ram: Snapshot['ram'] | undefined = effectiveRam, useRuntime = true) =>
     achievementCounter(achievement, ram, activeProfile, useRuntime ? runtimeLive : undefined);
 

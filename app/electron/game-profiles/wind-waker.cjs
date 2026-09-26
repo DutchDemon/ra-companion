@@ -1,18 +1,15 @@
 'use strict';
 
-// Test 2 profile skeleton for The Legend of Zelda: The Wind Waker.
-//
-// This deliberately contains detection metadata only. It does not contain
-// game-specific RAM addresses, story rules, achievement rules, or memory
-// writes. The existing read-only Dolphin/rcheevos observer remains the only
-// live runtime surface until Wind Waker RAM mappings are verified separately.
+// Wind Waker PAL profile. Test 3 adds a verified read-only memory decoder for
+// area/room, hearts and rupees while official RA server progress and rcheevos
+// Rich Presence remain authoritative. No game-memory writes are permitted.
 const WIND_WAKER_PROFILE = Object.freeze({
   key: 'wind-waker-gc-pal',
   raGameId: 9190,
   title: 'The Legend of Zelda: The Wind Waker',
   platform: 'GameCube',
   region: 'PAL / Europe',
-  enhanced: false,
+  enhanced: true,
   gameCodes: Object.freeze(['GZLP01']),
   windowTitlePatterns: Object.freeze([/wind\s+waker/i]),
 
@@ -24,13 +21,14 @@ const WIND_WAKER_PROFILE = Object.freeze({
   matchesRam(ram) {
     const code = String(ram?.gameCode || ram?.headerGameCode || '').trim().toUpperCase();
     return Boolean(
-      ram?.mappingOpen &&
+      ram?.attached &&
+      !ram?.stale &&
       this.gameCodes.includes(code),
     );
   },
 
   buildRamPresence() {
-    // Official rcheevos Rich Presence stays authoritative for this test.
+    // Official rcheevos Rich Presence stays the preferred live display source.
     return '';
   },
 });

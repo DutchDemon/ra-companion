@@ -160,7 +160,8 @@ export function Dashboard() {
     refresh,
   } = useAppView();
   const heroTitle = gameActive ? (data?.Title || snapshot?.game?.profile || activeProfile?.title || 'Current game') : 'No supported game detected';
-  const formLabel = effectiveRam?.linkForm === 'wolf' ? 'Wolf Link' : effectiveRam?.linkForm === 'human' ? 'Human Link' : 'Unknown';
+  const formLabel = sessionStats.form || (effectiveRam?.linkForm === 'wolf' ? 'Wolf Link' : effectiveRam?.linkForm === 'human' ? 'Human Link' : 'Unknown');
+  const customDashboardStats = sessionStats.dashboardStats || [];
   const contextLabel = companion.context.label || effectiveRam?.stageName || effectiveRam?.stageCode || 'Waiting for live context';
   const riskLabel = activeMissableCount ? `${activeMissableCount} missable${activeMissableCount === 1 ? '' : 's'} active` : 'No urgent missables';
   return (
@@ -185,13 +186,19 @@ export function Dashboard() {
                 </div>
               )}
               <div className="v5-context-grid v6-session-grid">
-                <span>Current form <b>{gameActive ? formLabel : '—'}</b></span>
-                <span>Area / context <b>{gameActive ? contextLabel : '—'}</b></span>
-                <span>Hearts <b>{gameActive ? sessionStats.hearts : '—'}</b></span>
-                <span>Poe Souls <b>{gameActive ? sessionStats.poeSouls : '—'}</b></span>
-                <span>Golden Bugs <b>{gameActive ? sessionStats.goldenBugs : '—'}</b></span>
+                {customDashboardStats.length ? customDashboardStats.map((stat: { label: string; value: string }) => (
+                  <span key={stat.label}>{stat.label} <b>{gameActive ? stat.value : '—'}</b></span>
+                )) : (
+                  <>
+                    <span>Current form <b>{gameActive ? formLabel : '—'}</b></span>
+                    <span>Area / context <b>{gameActive ? contextLabel : '—'}</b></span>
+                    <span>Hearts <b>{gameActive ? sessionStats.hearts : '—'}</b></span>
+                    <span>Poe Souls <b>{gameActive ? sessionStats.poeSouls : '—'}</b></span>
+                    <span>Golden Bugs <b>{gameActive ? sessionStats.goldenBugs : '—'}</b></span>
+                    {gameActive && sessionStats.contextStat && <span className="v6-context-stat">Context <b>{sessionStats.contextStat}</b></span>}
+                  </>
+                )}
                 <span>Risk level <b className={activeMissableCount ? 'warning-text' : 'good'}>{gameActive ? (activeMissableCount ? 'Attention' : 'Clear') : 'Idle'}</b></span>
-                {gameActive && sessionStats.contextStat && <span className="v6-context-stat">Context <b>{sessionStats.contextStat}</b></span>}
               </div>
             </div>
           </div>
@@ -258,6 +265,7 @@ export function CurrentGamePage() {
     ramLive,
     serverPresenceMessage,
     currentNextAchievements,
+    sessionStats,
   } = useAppView();
   return (
     <>
@@ -276,10 +284,12 @@ export function CurrentGamePage() {
             <div className="v5-context-detail-grid">
               <div><span>Stage</span><b>{effectiveRam?.stageName || effectiveRam?.stageCode || '—'}</b></div>
               <div><span>Room</span><b>{ramRoom !== null ? ramRoom : '—'}</b></div>
-              <div><span>Form</span><b>{effectiveRam?.linkForm === 'wolf' ? 'Wolf Link' : effectiveRam?.linkForm === 'human' ? 'Human Link' : '—'}</b></div>
-              <div><span>Bottles</span><b>{typeof effectiveRam?.bottleCount === 'number' ? effectiveRam.bottleCount : '—'}</b></div>
-              <div><span>Player control</span><b>{effectiveRam?.playerControl === true ? 'Yes' : effectiveRam?.playerControl === false ? 'No' : '—'}</b></div>
-              <div><span>Cutscene</span><b>{effectiveRam?.inCutscene === true ? 'Yes' : effectiveRam?.inCutscene === false ? 'No' : '—'}</b></div>
+              <div><span>Hearts</span><b>{sessionStats.hearts || '—'}</b></div>
+              {typeof effectiveRam?.rupees === 'number' && <div><span>Rupees</span><b>{effectiveRam.rupees}</b></div>}
+              {(effectiveRam?.linkForm || sessionStats.form !== 'Unknown') && <div><span>Form</span><b>{effectiveRam?.linkForm === 'wolf' ? 'Wolf Link' : effectiveRam?.linkForm === 'human' ? 'Human Link' : sessionStats.form}</b></div>}
+              {typeof effectiveRam?.bottleCount === 'number' && <div><span>Bottles</span><b>{effectiveRam.bottleCount}</b></div>}
+              {typeof effectiveRam?.playerControl === 'boolean' && <div><span>Player control</span><b>{effectiveRam.playerControl ? 'Yes' : 'No'}</b></div>}
+              {typeof effectiveRam?.inCutscene === 'boolean' && <div><span>Cutscene</span><b>{effectiveRam.inCutscene ? 'Yes' : 'No'}</b></div>}
               <div><span>Context source</span><b>{presenceSource === 'rcheevos-runtime' ? 'Official RA · rcheevos' : presenceSource === 'ram' ? 'Dolphin RAM fallback' : presenceSource === 'retro-achievements' ? 'RA server profile' : 'Waiting'}</b></div>
             </div>
           </article>

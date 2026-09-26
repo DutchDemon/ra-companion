@@ -7,12 +7,16 @@ on:
       - '.github/workflows/wind-waker-test2-validation.yml'
       - 'app/electron/game-profiles/**'
       - 'scripts/test-wind-waker-profile.cjs'
+      - 'app/tools/ram-reader.ps1'
+      - 'app/tools/memory-profiles/wind-waker-gzlp01.ps1'
   pull_request:
     branches: [main]
     paths:
       - '.github/workflows/wind-waker-test2-validation.yml'
       - 'app/electron/game-profiles/**'
       - 'scripts/test-wind-waker-profile.cjs'
+      - 'app/tools/ram-reader.ps1'
+      - 'app/tools/memory-profiles/wind-waker-gzlp01.ps1'
 
 jobs:
   validate:
@@ -25,7 +29,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Wind Waker profile skeleton regression
+      - name: Wind Waker profile detection regression
         shell: pwsh
         run: |
           node --check app/electron/game-profiles/wind-waker.cjs
@@ -33,7 +37,7 @@ jobs:
           node --check app/electron/game-profiles/registry.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Game profile registry syntax failed.' }
           node scripts/test-wind-waker-profile.cjs
-          if ($LASTEXITCODE -ne 0) { throw 'Wind Waker Test 2 regression failed.' }
+          if ($LASTEXITCODE -ne 0) { throw 'Wind Waker profile regression failed.' }
 
       - name: Guard observer-only authority boundary
         shell: pwsh
@@ -43,8 +47,13 @@ jobs:
           if ($main.Contains('runtimeProgress =')) { throw 'Local runtime must not replace official RA progress.' }
 
           $profile = Get-Content 'app/electron/game-profiles/wind-waker.cjs' -Raw
-          if ($profile -match '0x[0-9A-Fa-f]{6,8}') { throw 'Test 2 profile must not introduce Wind Waker RAM addresses.' }
-          if (-not $profile.Contains('enhanced: false')) { throw 'Wind Waker skeleton must remain raw/unmapped.' }
+          if ($profile -match '0x[0-9A-Fa-f]{6,8}') { throw 'Electron game profile must remain address-free; addresses belong in the read-only GameMemoryProfile.' }
+          if (-not $profile.Contains('enhanced: true')) { throw 'Wind Waker profile must expose the verified Test 3 RAM decoder.' }
+
+          $memoryProfile = Get-Content 'app/tools/memory-profiles/wind-waker-gzlp01.ps1' -Raw
+          foreach ($forbiddenWrite in @('WriteProcessMemory', 'FILE_MAP_WRITE', 'PROCESS_VM_WRITE', 'MapViewOfFileEx')) {
+            if ($memoryProfile.Contains($forbiddenWrite)) { throw "Wind Waker memory profile contains a forbidden write primitive: $forbiddenWrite" }
+          }
 
           $runtimeData = Get-Content 'app/electron/services/ra-runtime-data-service.cjs' -Raw
           foreach ($forbidden in @("r: 'startsession'", "r: 'ping'", "r: 'awardachievement'", "r: 'submitlbentry'")) {

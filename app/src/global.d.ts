@@ -250,6 +250,8 @@ declare global {
       region?: string;
       mem1Base?: string;
       hookSource?: string;
+      memoryProvider?: string;
+      memoryProfile?: string;
       sharedMemoryName?: string;
       mappingOpen?: boolean;
       headerGameCode?: string;
@@ -269,6 +271,7 @@ declare global {
       lastMagicGameCode?: string;
       stageCode?: string;
       stageName?: string;
+      rawStageName?: string;
       kind?: string;
       boss?: string | null;
       mapped?: boolean;
