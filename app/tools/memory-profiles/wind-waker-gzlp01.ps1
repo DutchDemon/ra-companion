@@ -1,4 +1,3 @@
-'use strict' # marker only for grep; harmless PowerShell string expression
 # Wind Waker PAL (GZLP01) read-only GameMemoryProfile.
 # Addresses are derived from the PAL libtww/tww-gz symbols and cross-checked
 # against Dolphin's GZLP01.ini. This file never writes to emulated memory.
