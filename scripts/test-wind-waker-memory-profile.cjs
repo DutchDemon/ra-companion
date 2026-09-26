@@ -17,8 +17,9 @@ assert(memoryProfile.includes("44 = 'Outset Island'"), 'Sea room 44 must map to 
 assert(memoryProfile.includes("$maxLife = Read-BigEndianUInt16"), 'Max life must be decoded as big-endian u16.');
 assert(memoryProfile.includes("$life = Read-BigEndianUInt16"), 'Current life must be decoded as big-endian u16.');
 assert(memoryProfile.includes("$rupees = Read-BigEndianUInt16"), 'Rupees must be decoded as big-endian u16.');
-assert(memoryProfile.includes('$maxLife / 16.0'), 'Wind Waker heart conversion must use 0x10 health units per heart.');
-assert(memoryProfile.includes('$life / 16.0'), 'Wind Waker current heart conversion must use 0x10 health units per heart.');
+assert(memoryProfile.includes('Convert-WindWakerLifeUnitsToHearts $maxLife'), 'Max-life conversion must use the shared quarter-heart helper.');
+assert(memoryProfile.includes('Convert-WindWakerLifeUnitsToHearts $life'), 'Current-life conversion must use the shared quarter-heart helper.');
+assert(memoryProfile.includes('$lifeUnits / 4.0'), 'Wind Waker heart conversion must preserve quarter-heart precision with 4 raw units per heart.');
 
 assert(ramReader.includes("$gameMemoryProfiles = @{"), 'Generic GameMemoryProfile registry missing.');
 assert(ramReader.includes("'GZLP01' = (Get-WindWakerMemoryProfile)"), 'GZLP01 must be registered with the generic reader.');

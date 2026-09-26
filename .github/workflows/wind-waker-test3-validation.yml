@@ -2,7 +2,7 @@ name: Wind Waker Test 3 Memory Profile Validation
 
 on:
   push:
-    branches: [feature/wind-waker-test3-memory-profile]
+    branches: [feature/wind-waker-test3-memory-profile, fix/wind-waker-quarter-hearts]
     paths:
       - '.github/workflows/wind-waker-test3-validation.yml'
       - '.github/workflows/wind-waker-test2-validation.yml'
@@ -63,6 +63,19 @@ jobs:
           if (('{0:X8}' -f [uint64]$profile.StartStage) -ne '803D1664') { throw 'Unexpected GZLP01 start-stage address.' }
           if (('{0:X8}' -f [uint64]$profile.StayRoom) -ne '803FE278') { throw 'Unexpected GZLP01 current-room address.' }
           if ((Get-WindWakerAreaLabel 'sea' 44) -ne 'Outset Island') { throw 'Sea room 44 must resolve to Outset Island.' }
+          $heartCases = @{
+            12 = 3.00
+            11 = 2.75
+            10 = 2.50
+            9 = 2.25
+            8 = 2.00
+          }
+          foreach ($entry in $heartCases.GetEnumerator()) {
+            $actual = Convert-WindWakerLifeUnitsToHearts ([int]$entry.Key)
+            if ([Math]::Abs([double]$actual - [double]$entry.Value) -gt 0.001) {
+              throw "Unexpected heart conversion for raw $($entry.Key): $actual"
+            }
+          }
 
       - name: Wind Waker Test 3 focused regressions
         shell: pwsh

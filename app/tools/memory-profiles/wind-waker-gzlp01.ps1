@@ -138,6 +138,10 @@ function Get-WindWakerAreaLabel([string]$stageCode, [int]$room) {
     return $stageCode
 }
 
+function Convert-WindWakerLifeUnitsToHearts([int]$lifeUnits) {
+    return [Math]::Round($lifeUnits / 4.0, 2)
+}
+
 function Read-WindWakerGzlp01State($shared, $profile) {
     if ($null -eq $profile) { return $null }
 
@@ -164,12 +168,13 @@ function Read-WindWakerGzlp01State($shared, $profile) {
     $life = Read-BigEndianUInt16 ([byte[]]$statusBytes[2..3])
     $rupees = Read-BigEndianUInt16 ([byte[]]$statusBytes[4..5])
 
-    # Wind Waker stores one full heart as 0x10 health units.
+    # Wind Waker's save/runtime life values use 4 units per full heart.
+    # This preserves quarter-heart precision: 12 = 3.00, 11 = 2.75, 10 = 2.50, 9 = 2.25.
     $maxHearts = if ($null -ne $maxLife -and $maxLife -gt 0 -and $maxLife -le 0x200) {
-        [Math]::Round($maxLife / 16.0, 2)
+        Convert-WindWakerLifeUnitsToHearts $maxLife
     } else { $null }
     $currentHearts = if ($null -ne $life -and $life -ge 0 -and $life -le 0x200) {
-        [Math]::Round($life / 16.0, 2)
+        Convert-WindWakerLifeUnitsToHearts $life
     } else { $null }
     if ($null -ne $maxLife -and $null -ne $life -and $maxLife -gt 0 -and $life -gt $maxLife) {
         return $null
