@@ -49,11 +49,12 @@ describe('Wind Waker Test 3 normalized memory profile', () => {
   });
 
   it('preserves quarter-heart precision in normalized session stats', () => {
-    const stats = getProfileSessionStats(WIND_WAKER_PROFILE, {
-      ...ram,
+    const quarterHeartRam = {
+      ...(ram as NonNullable<Snapshot['ram']>),
       currentHearts: 2.75,
       maxHearts: 3,
-    });
+    } as Snapshot['ram'];
+    const stats = getProfileSessionStats(WIND_WAKER_PROFILE, quarterHeartRam);
     expect(stats.hearts).toBe('2.75/3');
   });
 
