@@ -1,0 +1,128 @@
+name: Wind Waker Test 3 Memory Profile Validation
+
+on:
+  push:
+    branches: [feature/wind-waker-test3-memory-profile]
+    paths:
+      - '.github/workflows/wind-waker-test3-validation.yml'
+      - '.github/workflows/wind-waker-test2-validation.yml'
+      - 'app/tools/ram-reader.ps1'
+      - 'app/tools/memory-profiles/**'
+      - 'app/electron/game-profiles/**'
+      - 'app/src/profiles/registry.ts'
+      - 'app/src/AppPages.tsx'
+      - 'app/src/main.tsx'
+      - 'app/src/global.d.ts'
+      - 'app/src/__tests__/v082.wind-waker-memory.test.ts'
+      - 'scripts/test-wind-waker-memory-profile.cjs'
+      - 'scripts/test-wind-waker-profile.cjs'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/wind-waker-test3-validation.yml'
+      - '.github/workflows/wind-waker-test2-validation.yml'
+      - 'app/tools/ram-reader.ps1'
+      - 'app/tools/memory-profiles/**'
+      - 'app/electron/game-profiles/**'
+      - 'app/src/profiles/registry.ts'
+      - 'app/src/AppPages.tsx'
+      - 'app/src/main.tsx'
+      - 'app/src/global.d.ts'
+      - 'app/src/__tests__/v082.wind-waker-memory.test.ts'
+      - 'scripts/test-wind-waker-memory-profile.cjs'
+      - 'scripts/test-wind-waker-profile.cjs'
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate PowerShell memory provider and profile
+        shell: pwsh
+        run: |
+          foreach ($path in @('app/tools/ram-reader.ps1', 'app/tools/memory-profiles/wind-waker-gzlp01.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path), [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_.Message }
+              throw "PowerShell syntax failed for $path"
+            }
+          }
+
+          function Convert-HexToUInt64([string]$hex) { return [Convert]::ToUInt64($hex, 16) }
+          . ./app/tools/memory-profiles/wind-waker-gzlp01.ps1
+          $profile = Get-WindWakerMemoryProfile
+          if (('{0:X8}' -f [uint64]$profile.GameInfo) -ne '803CC530') { throw 'Unexpected GZLP01 gameInfo address.' }
+          if (('{0:X8}' -f [uint64]$profile.StartStage) -ne '803D1664') { throw 'Unexpected GZLP01 start-stage address.' }
+          if (('{0:X8}' -f [uint64]$profile.StayRoom) -ne '803FE278') { throw 'Unexpected GZLP01 current-room address.' }
+          if ((Get-WindWakerAreaLabel 'sea' 44) -ne 'Outset Island') { throw 'Sea room 44 must resolve to Outset Island.' }
+
+      - name: Wind Waker Test 3 focused regressions
+        shell: pwsh
+        run: |
+          node --check app/electron/game-profiles/wind-waker.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Wind Waker Electron profile syntax failed.' }
+          node scripts/test-wind-waker-profile.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Wind Waker detection regression failed.' }
+          node scripts/test-wind-waker-memory-profile.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Wind Waker Test 3 memory regression failed.' }
+
+      - name: Guard read-only memory and official RA authority
+        shell: pwsh
+        run: |
+          $reader = Get-Content 'app/tools/ram-reader.ps1' -Raw
+          $profile = Get-Content 'app/tools/memory-profiles/wind-waker-gzlp01.ps1' -Raw
+          if (-not $reader.Contains('FILE_MAP_READ = 0x0004')) { throw 'Dolphin memory provider is not explicitly read-only.' }
+          foreach ($forbiddenWrite in @('WriteProcessMemory', 'FILE_MAP_WRITE', 'PROCESS_VM_WRITE')) {
+            if ($reader.Contains($forbiddenWrite) -or $profile.Contains($forbiddenWrite)) {
+              throw "Forbidden memory-write primitive found: $forbiddenWrite"
+            }
+          }
+
+          $main = Get-Content 'app/electron/main.cjs' -Raw
+          if (-not $main.Contains('const progress = baseProgress;')) { throw 'Official RA completion authority invariant is missing.' }
+          if ($main.Contains('runtimeProgress =')) { throw 'Local runtime must not replace official RA progress.' }
+
+          $runtimeData = Get-Content 'app/electron/services/ra-runtime-data-service.cjs' -Raw
+          foreach ($forbidden in @("r: 'startsession'", "r: 'ping'", "r: 'awardachievement'", "r: 'submitlbentry'")) {
+            if ($runtimeData.Contains($forbidden)) { throw "Forbidden RA submission/session endpoint found: $forbidden" }
+          }
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm install --no-audit --no-fund
+
+      - name: TypeScript and focused renderer regression
+        working-directory: app
+        shell: pwsh
+        run: |
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'TypeScript typecheck failed.' }
+          npx vitest run src/__tests__/v082.wind-waker-memory.test.ts --environment jsdom
+          if ($LASTEXITCODE -ne 0) { throw 'Wind Waker renderer regression failed.' }
+
+      - name: Full regressions and production build
+        working-directory: app
+        shell: pwsh
+        run: |
+          npm run test:regressions
+          if ($LASTEXITCODE -ne 0) { throw 'Full regression suite failed.' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Production build failed.' }
+
+      - name: Runtime safety regressions
+        shell: pwsh
+        run: |
+          node scripts/test-observer-runtime-service.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Observer runtime regression failed.' }
+          node scripts/test-rich-presence-ui-contract.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Rich Presence UI regression failed.' }
+          node scripts/test-runtime-helper-epipe.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'EPIPE regression failed.' }
